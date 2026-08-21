@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: studiq-backend
+    env: python
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ALLOWED_ORIGINS
+        value: "*"
+      - key: STUDIQ_DATABASE_URL
+        value: sqlite:////var/data/studiq.db
+    disk:
+      name: studiq-db-disk
+      mountPath: /var/data
+      sizeGB: 1
