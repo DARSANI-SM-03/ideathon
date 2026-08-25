@@ -1,14 +1,16 @@
 """
-StudIQ Native Windows Setup Package Builder
-============================================
+StudIQ Native Windows Setup Package Builder (v1.3)
+===================================================
 1. Packages dist/StudIQAgent into StudIQAgent.zip (compressed payload).
 2. Base64-encodes StudIQAgent.zip.
-3. Generates standalone native Windows setup script StudIQAgentSetup.bat.
+3. Generates standalone native Windows setup script StudIQAgentSetup.bat (v1.3).
    - Requires 0 MB of PyInstaller C bootloader DLL temporary extraction on C:
-   - Dynamically selects E:\\ drive as top preference if available, falling back safely to D: or C:
-   - Resolves WinError 32 file handle locks cleanly.
+   - Dynamically resolves Windows per-user LOCALAPPDATA directory (%LOCALAPPDATA%\StudIQ\Agent).
+   - Unblocks Mark-of-the-Web (MotW) download flags automatically.
+   - Dual-logs to %TEMP%\StudIQAgentSetup.log & %LOCALAPPDATA%\StudIQ\Agent\install.log.
+   - Captures errors and forces CMD pause so windows never close silently on failure.
    - Registers HKCU URI scheme & Windows startup.
-   - Launches daemon and displays setup completion alert.
+   - Launches background daemon.
 """
 
 import sys
@@ -27,24 +29,35 @@ def create_payload_zip(source_dir: str, output_zip_path: str):
     zip_size = os.path.getsize(output_zip_path)
     print(f"[Build Native Setup] Payload ZIP created ({zip_size} bytes / {zip_size / (1024*1024):.2f} MB).")
 
-PS_SETUP_SCRIPT_TEMPLATE = r'''# StudIQ Desktop Agent Installer PowerShell Core Engine
+PS_SETUP_SCRIPT_TEMPLATE = r'''# StudIQ Desktop Agent Setup PowerShell Core Engine v1.3
 $ErrorActionPreference = 'Stop'
 
 Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+
+$Global:LogFile = Join-Path $env:TEMP 'StudIQAgentSetup.log'
+
+function Write-Log([string]$msg, [string]$color = 'White') {
+    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $logLine = "[$timestamp] $msg"
+    Write-Host $msg -ForegroundColor $color
+    try {
+        Add-Content -Path $Global:LogFile -Value $logLine -ErrorAction SilentlyContinue
+    } catch {}
+}
 
 function Show-MsgBox([string]$msg, [string]$title, [int]$icon = 64) {
     try {
         [System.Windows.Forms.MessageBox]::Show($msg, $title, [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]$icon) | Out-Null
     } catch {
-        Write-Host "[$title] $msg"
+        Write-Log "[$title] $msg" 'Yellow'
     }
 }
 
 try {
-    Write-Host '==========================================================' -ForegroundColor Cyan
-    Write-Host '   StudIQ Windows Desktop Agent Native Setup Engine' -ForegroundColor Cyan
-    Write-Host '==========================================================' -ForegroundColor Cyan
-    Write-Host '[Setup] Resolving Windows per-user installation path...' -ForegroundColor Yellow
+    Write-Log '==========================================================' 'Cyan'
+    Write-Log '   StudIQ Desktop Agent Setup v1.3' 'Cyan'
+    Write-Log '==========================================================' 'Cyan'
+    Write-Log '[Setup] Resolving Windows per-user installation path...' 'Yellow'
 
     $localAppData = $env:LOCALAPPDATA
     if (-not $localAppData) {
@@ -78,18 +91,21 @@ try {
     }
 
     if (-not $installDir) {
-        Write-Host '[ERROR] Insufficient disk space on all drives.' -ForegroundColor Red
-        Show-MsgBox 'StudIQ Agent setup failed: Insufficient free disk space on all local drives.' 'StudIQ Setup Error' 16
+        Write-Log '[ERROR] Insufficient disk space on all local drives.' 'Red'
+        Show-MsgBox 'StudIQ Desktop Agent setup failed: Insufficient free disk space on all local drives.' 'StudIQ Setup Error' 16
         exit 1
     }
 
-    Write-Host "[Setup] Selected target directory: $installDir (Drive $targetDrive)" -ForegroundColor Green
+    Write-Log "[Setup] Selected target directory: $installDir (Drive $targetDrive)" 'Green'
 
     if (-not (Test-Path $installDir)) {
         New-Item -ItemType Directory -Path $installDir -Force | Out-Null
     }
 
-    Write-Host '[Setup] Checking for active StudIQAgent processes...' -ForegroundColor Yellow
+    # Set up dual logging to target directory as well
+    $localInstallLog = Join-Path $installDir 'install.log'
+
+    Write-Log '[Setup] Checking for active StudIQAgent processes...' 'Yellow'
     try {
         $req = [System.Net.WebRequest]::Create('http://127.0.0.1:8765/stop')
         $req.Method = 'POST'
@@ -114,7 +130,7 @@ try {
         }
     }
 
-    Write-Host '[Setup] Extracting binary payload directly to installation drive...' -ForegroundColor Green
+    Write-Log '[Setup] Extracting binary payload directly to installation directory...' 'Green'
     $setupScriptPath = $args[0]
     if (-not $setupScriptPath -or -not (Test-Path $setupScriptPath)) {
         $setupScriptPath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Definition) 'StudIQAgentSetup.bat'
@@ -149,7 +165,7 @@ try {
         throw "StudIQAgent.exe missing at $exePath after extraction."
     }
 
-    Write-Host '[Setup] Configuring Windows Registry protocol and startup keys...' -ForegroundColor Green
+    Write-Log '[Setup] Configuring Windows Registry protocol and startup keys...' 'Green'
     $protKey = 'HKCU:\Software\Classes\studiq-agent'
     New-Item -Path $protKey -Force | Out-Null
     Set-ItemProperty -Path $protKey -Name '(default)' -Value 'URL:StudIQ Agent Protocol' -Force
@@ -196,20 +212,25 @@ pause
 "@
     Set-Content -Path $unBat -Value $unCode -Force
 
-    Write-Host '[Setup] Launching background StudIQ Agent daemon...' -ForegroundColor Green
+    Write-Log '[Setup] Launching background StudIQ Agent daemon...' 'Green'
     Start-Process -FilePath $exePath -ArgumentList 'studiq-agent://start' -WindowStyle Hidden
 
-    Write-Host '==========================================================' -ForegroundColor Green
-    Write-Host ' SUCCESS: StudIQ Desktop Agent Installed Successfully!' -ForegroundColor Green
-    Write-Host " Installation Directory : $installDir" -ForegroundColor Green
-    Write-Host ' Protocol Handler Registered : studiq-agent://' -ForegroundColor Green
-    Write-Host ' Windows Startup Configured  : HKCU Run Key' -ForegroundColor Green
-    Write-Host '==========================================================' -ForegroundColor Green
+    Write-Log '==========================================================' 'Green'
+    Write-Log ' SUCCESS: StudIQ Desktop Agent Installed Successfully!' 'Green'
+    Write-Log " Installation Directory : $installDir" 'Green'
+    Write-Log ' Protocol Handler Registered : studiq-agent://' 'Green'
+    Write-Log ' Windows Startup Configured  : HKCU Run Key' 'Green'
+    Write-Log '==========================================================' 'Green'
+
+    try {
+        Copy-Item -Path $Global:LogFile -Destination $localInstallLog -Force -ErrorAction SilentlyContinue
+    } catch {}
 
     Show-MsgBox "StudIQ Desktop Agent was installed successfully!`n`nLocation: $installDir`n`nBackground monitoring is active." "StudIQ Setup Complete" 64
 } catch {
-    Write-Host "[Setup Error] $($_.Exception.Message)" -ForegroundColor Red
-    Show-MsgBox "StudIQ Agent setup failed:`n$($_.Exception.Message)" "StudIQ Setup Error" 16
+    $err = $_.Exception.Message
+    Write-Log "[Setup Error] $err" 'Red'
+    Show-MsgBox "StudIQ Desktop Agent setup failed:`n$err`n`nDetailed log file: $Global:LogFile" "StudIQ Setup Error" 16
     exit 1
 }
 '''
@@ -229,21 +250,42 @@ def generate_native_installer_bat(zip_path: str, output_bat_path: str):
     print(f"[Build Native Setup] Generated standalone StudIQAgentSetup.ps1 ({os.path.getsize(output_ps1_path)} bytes).")
 
     bat_template = f"""@echo off
-title StudIQ Agent 1-Click Windows Setup v1.2
+title StudIQ Desktop Agent Setup v1.3
 setlocal enabledelayedexpansion
 
 echo ==========================================================
-echo    StudIQ Windows Desktop Agent 1-Click Setup v1.2
+echo    StudIQ Desktop Agent Setup v1.3
 echo ==========================================================
 echo Initializing native Windows installation setup...
 echo.
 
 set "BAT_PATH=%~f0"
 set "TEMP_PS1=%TEMP%\\studiq_setup_%RANDOM%.ps1"
+set "TEMP_LOG=%TEMP%\\StudIQAgentSetup.log"
 set "PS_B64={b64_ps_code}"
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "[System.IO.File]::WriteAllText($env:TEMP_PS1, [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($env:PS_B64)))"
+echo [Installer Launcher v1.3] [%DATE% %TIME%] Launching StudIQ Desktop Agent Setup >> "%TEMP_LOG%"
 
+rem Unblock Mark-of-the-Web download security flag if present
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Unblock-File -Path '%BAT_PATH%' -ErrorAction SilentlyContinue" >nul 2>&1
+
+rem Decode embedded PowerShell engine
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[System.IO.File]::WriteAllText($env:TEMP_PS1, [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($env:PS_B64)))"
+if not exist "%TEMP_PS1%" (
+    echo.
+    echo ==========================================================
+    echo  [ERROR] Failed to extract temporary setup engine.
+    echo ==========================================================
+    echo.
+    echo [ERROR] Failed to extract temporary setup engine script to %TEMP_PS1% >> "%TEMP_LOG%"
+    pause
+    exit /b 1
+)
+
+rem Unblock temporary extracted setup engine script
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Unblock-File -Path '%TEMP_PS1%' -ErrorAction SilentlyContinue" >nul 2>&1
+
+rem Execute PowerShell setup engine
 powershell -NoProfile -ExecutionPolicy Bypass -File "%TEMP_PS1%" "%BAT_PATH%"
 set "EXIT_CODE=%ERRORLEVEL%"
 
@@ -252,7 +294,8 @@ if exist "%TEMP_PS1%" del /f /q "%TEMP_PS1%" >nul 2>&1
 if %EXIT_CODE% neq 0 (
     echo.
     echo ==========================================================
-    echo  [ERROR] StudIQ Agent Setup failed with exit code %EXIT_CODE%.
+    echo  [ERROR] StudIQ Desktop Agent Setup failed with exit code %EXIT_CODE%.
+    echo  Detailed log file available at: %TEMP_LOG%
     echo ==========================================================
     echo.
     pause
@@ -261,7 +304,7 @@ if %EXIT_CODE% neq 0 (
 
 echo.
 echo ==========================================================
-echo  StudIQ Desktop Agent Setup Finished Successfully.
+echo  StudIQ Desktop Agent Setup v1.3 Finished Successfully.
 echo ==========================================================
 echo.
 pause

@@ -168,7 +168,7 @@ export const StudentDashboard: React.FC = () => {
       setAgentConnected(true);
       setShowBridgeModal(false);
     } else {
-      setAgentActionMessage('🔴 StudIQ Agent setup required. Click Set Up StudIQ Agent to complete 1-click install.');
+      setAgentActionMessage('🔴 StudIQ Agent setup required. Click Set Up StudIQ Agent to complete setup.');
       setAgentConnected(false);
       setShowBridgeModal(true);
     }
@@ -177,15 +177,17 @@ export const StudentDashboard: React.FC = () => {
 
   const handleDownloadAndSetupAgent = async () => {
     setIsDownloadingSetup(true);
-    setAgentActionMessage('⬇️ Download started. Run the installer to configure StudIQ Agent and launch monitoring automatically.');
+    setAgentActionMessage('⬇️ Downloaded StudIQAgentSetup.bat (v1.3). Please click to run the installer file.');
     await AgentBridgeService.downloadInstaller();
 
     // Poll for bridge coming online after user runs setup
-    const activeBridge = await AgentBridgeService.pollForBridgeActive(45000, 1500);
+    const activeBridge = await AgentBridgeService.pollForBridgeActive(60000, 1500);
     if (activeBridge) {
       setAgentActionMessage('🟢 StudIQ Agent Connected & Setup Complete!');
       setAgentConnected(true);
       setShowBridgeModal(false);
+    } else {
+      setAgentActionMessage('🔴 Agent setup pending. Please run the downloaded StudIQAgentSetup.bat installer.');
     }
     setIsDownloadingSetup(false);
   };
@@ -414,7 +416,7 @@ export const StudentDashboard: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="text-base font-black text-white">StudIQ Agent Setup Required</h3>
-                  <span className="text-xs font-mono text-slate-400">Automated 1-Click Windows Setup</span>
+                  <span className="text-xs font-mono text-slate-400">Automated Windows Setup</span>
                 </div>
               </div>
               <button
@@ -564,7 +566,7 @@ export const StudentDashboard: React.FC = () => {
                 onClick={handleDownloadAndSetupAgent}
                 disabled={isDownloadingSetup}
                 className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-brand-400 text-xs font-bold border border-slate-700 flex items-center gap-2 transition"
-                title="Download 1-Click Installer Setup"
+                title="Download StudIQ Desktop Agent Setup"
               >
                 <Download className="w-4 h-4" />
                 {isDownloadingSetup ? 'Installing...' : 'Set Up Agent'}

@@ -1,21 +1,32 @@
-# StudIQ Desktop Agent Installer PowerShell Core Engine
+# StudIQ Desktop Agent Setup PowerShell Core Engine v1.3
 $ErrorActionPreference = 'Stop'
 
 Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+
+$Global:LogFile = Join-Path $env:TEMP 'StudIQAgentSetup.log'
+
+function Write-Log([string]$msg, [string]$color = 'White') {
+    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $logLine = "[$timestamp] $msg"
+    Write-Host $msg -ForegroundColor $color
+    try {
+        Add-Content -Path $Global:LogFile -Value $logLine -ErrorAction SilentlyContinue
+    } catch {}
+}
 
 function Show-MsgBox([string]$msg, [string]$title, [int]$icon = 64) {
     try {
         [System.Windows.Forms.MessageBox]::Show($msg, $title, [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]$icon) | Out-Null
     } catch {
-        Write-Host "[$title] $msg"
+        Write-Log "[$title] $msg" 'Yellow'
     }
 }
 
 try {
-    Write-Host '==========================================================' -ForegroundColor Cyan
-    Write-Host '   StudIQ Windows Desktop Agent Native Setup Engine' -ForegroundColor Cyan
-    Write-Host '==========================================================' -ForegroundColor Cyan
-    Write-Host '[Setup] Resolving Windows per-user installation path...' -ForegroundColor Yellow
+    Write-Log '==========================================================' 'Cyan'
+    Write-Log '   StudIQ Desktop Agent Setup v1.3' 'Cyan'
+    Write-Log '==========================================================' 'Cyan'
+    Write-Log '[Setup] Resolving Windows per-user installation path...' 'Yellow'
 
     $localAppData = $env:LOCALAPPDATA
     if (-not $localAppData) {
@@ -49,18 +60,21 @@ try {
     }
 
     if (-not $installDir) {
-        Write-Host '[ERROR] Insufficient disk space on all drives.' -ForegroundColor Red
-        Show-MsgBox 'StudIQ Agent setup failed: Insufficient free disk space on all local drives.' 'StudIQ Setup Error' 16
+        Write-Log '[ERROR] Insufficient disk space on all local drives.' 'Red'
+        Show-MsgBox 'StudIQ Desktop Agent setup failed: Insufficient free disk space on all local drives.' 'StudIQ Setup Error' 16
         exit 1
     }
 
-    Write-Host "[Setup] Selected target directory: $installDir (Drive $targetDrive)" -ForegroundColor Green
+    Write-Log "[Setup] Selected target directory: $installDir (Drive $targetDrive)" 'Green'
 
     if (-not (Test-Path $installDir)) {
         New-Item -ItemType Directory -Path $installDir -Force | Out-Null
     }
 
-    Write-Host '[Setup] Checking for active StudIQAgent processes...' -ForegroundColor Yellow
+    # Set up dual logging to target directory as well
+    $localInstallLog = Join-Path $installDir 'install.log'
+
+    Write-Log '[Setup] Checking for active StudIQAgent processes...' 'Yellow'
     try {
         $req = [System.Net.WebRequest]::Create('http://127.0.0.1:8765/stop')
         $req.Method = 'POST'
@@ -85,7 +99,7 @@ try {
         }
     }
 
-    Write-Host '[Setup] Extracting binary payload directly to installation drive...' -ForegroundColor Green
+    Write-Log '[Setup] Extracting binary payload directly to installation directory...' 'Green'
     $setupScriptPath = $args[0]
     if (-not $setupScriptPath -or -not (Test-Path $setupScriptPath)) {
         $setupScriptPath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Definition) 'StudIQAgentSetup.bat'
@@ -120,7 +134,7 @@ try {
         throw "StudIQAgent.exe missing at $exePath after extraction."
     }
 
-    Write-Host '[Setup] Configuring Windows Registry protocol and startup keys...' -ForegroundColor Green
+    Write-Log '[Setup] Configuring Windows Registry protocol and startup keys...' 'Green'
     $protKey = 'HKCU:\Software\Classes\studiq-agent'
     New-Item -Path $protKey -Force | Out-Null
     Set-ItemProperty -Path $protKey -Name '(default)' -Value 'URL:StudIQ Agent Protocol' -Force
@@ -167,19 +181,24 @@ pause
 "@
     Set-Content -Path $unBat -Value $unCode -Force
 
-    Write-Host '[Setup] Launching background StudIQ Agent daemon...' -ForegroundColor Green
+    Write-Log '[Setup] Launching background StudIQ Agent daemon...' 'Green'
     Start-Process -FilePath $exePath -ArgumentList 'studiq-agent://start' -WindowStyle Hidden
 
-    Write-Host '==========================================================' -ForegroundColor Green
-    Write-Host ' SUCCESS: StudIQ Desktop Agent Installed Successfully!' -ForegroundColor Green
-    Write-Host " Installation Directory : $installDir" -ForegroundColor Green
-    Write-Host ' Protocol Handler Registered : studiq-agent://' -ForegroundColor Green
-    Write-Host ' Windows Startup Configured  : HKCU Run Key' -ForegroundColor Green
-    Write-Host '==========================================================' -ForegroundColor Green
+    Write-Log '==========================================================' 'Green'
+    Write-Log ' SUCCESS: StudIQ Desktop Agent Installed Successfully!' 'Green'
+    Write-Log " Installation Directory : $installDir" 'Green'
+    Write-Log ' Protocol Handler Registered : studiq-agent://' 'Green'
+    Write-Log ' Windows Startup Configured  : HKCU Run Key' 'Green'
+    Write-Log '==========================================================' 'Green'
+
+    try {
+        Copy-Item -Path $Global:LogFile -Destination $localInstallLog -Force -ErrorAction SilentlyContinue
+    } catch {}
 
     Show-MsgBox "StudIQ Desktop Agent was installed successfully!`n`nLocation: $installDir`n`nBackground monitoring is active." "StudIQ Setup Complete" 64
 } catch {
-    Write-Host "[Setup Error] $($_.Exception.Message)" -ForegroundColor Red
-    Show-MsgBox "StudIQ Agent setup failed:`n$($_.Exception.Message)" "StudIQ Setup Error" 16
+    $err = $_.Exception.Message
+    Write-Log "[Setup Error] $err" 'Red'
+    Show-MsgBox "StudIQ Desktop Agent setup failed:`n$err`n`nDetailed log file: $Global:LogFile" "StudIQ Setup Error" 16
     exit 1
 }

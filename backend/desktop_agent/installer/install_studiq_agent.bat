@@ -1,5 +1,5 @@
 @echo off
-title StudIQ Desktop Agent Installer v1.1
+title StudIQ Desktop Agent Setup v1.3
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install_agent.ps1"
 if errorlevel 1 (
     echo.

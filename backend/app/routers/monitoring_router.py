@@ -43,7 +43,7 @@ def create_agent_session(current_user: dict = Depends(get_current_user)):
 @router.get("/installer/download")
 def download_desktop_agent_installer():
     """
-    Serves the packaged StudIQ Desktop Agent 1-click Windows installer script (StudIQAgentSetup.bat).
+    Serves the packaged StudIQ Desktop Agent Windows setup script (StudIQAgentSetup.bat).
     """
     from fastapi.responses import FileResponse
     import os
@@ -58,7 +58,11 @@ def download_desktop_agent_installer():
             media_type="application/x-msdos-program",
             headers={
                 "Content-Disposition": 'attachment; filename="StudIQAgentSetup.bat"',
-                "Content-Length": str(file_size)
+                "Content-Length": str(file_size),
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+                "X-Installer-Version": "1.3"
             }
         )
     raise HTTPException(status_code=404, detail="StudIQ Agent setup installer script not found on server.")

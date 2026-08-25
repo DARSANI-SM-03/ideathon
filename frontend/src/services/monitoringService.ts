@@ -219,7 +219,7 @@ export class AgentBridgeService {
 
   public static async downloadInstaller(): Promise<void> {
     try {
-      const downloadUrl = `${API_BASE_URL}/monitoring/installer/download`;
+      const downloadUrl = `${API_BASE_URL}/monitoring/installer/download?t=${Date.now()}`;
       const link = document.createElement('a');
       link.href = downloadUrl;
       link.setAttribute('download', 'StudIQAgentSetup.bat');
@@ -231,13 +231,23 @@ export class AgentBridgeService {
     }
   }
 
-  public static async pollForBridgeActive(maxTimeoutMs: number = 30000, intervalMs: number = 1500): Promise<LocalBridgeStatus | null> {
+  public static async pollForBridgeActive(maxTimeoutMs: number = 60000, intervalMs: number = 1500): Promise<LocalBridgeStatus | null> {
     const startTime = Date.now();
     while (Date.now() - startTime < maxTimeoutMs) {
       const status = await this.checkBridgeStatus();
-      if (status && status.bridge_status === 'active') {
+      if (status && (status.bridge_status === 'active' || status.agent_running)) {
         return status;
       }
+      try {
+        const backendRes = await fetch(`${API_BASE_URL}/monitoring/agent-status`, { signal: AbortSignal.timeout(1500) });
+        if (backendRes.ok) {
+          const backendData = await backendRes.json();
+          if (backendData.connected) {
+            return { bridge_status: 'active', agent_running: true };
+          }
+        }
+      } catch (e) {}
+
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
     return null;
