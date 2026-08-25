@@ -12,10 +12,11 @@ from app.ai.warning_engine import warning_engine
 from app.ai.timeline_engine import timeline_engine
 from app.ai.replay_engine import replay_engine
 from app.ai.recommendation_engine import recommendation_engine
+from app.ai.central_metrics_engine import central_metrics_engine
 from app.models.monitoring import ParentWhitelist, StudyModeConfig, WarningLog, AITimelineEvent, ActivityLog, ParentAlert, MentorAlert
 
 from app.auth.security import create_agent_token, decode_agent_token
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, get_current_user_optional
 
 router = APIRouter(prefix="/monitoring", tags=["Monitoring & Explainable AI"])
 
@@ -37,6 +38,46 @@ def create_agent_session(current_user: dict = Depends(get_current_user)):
         "student_id": student_id,
         "student_code": student_code,
         "expires_in_hours": 24
+    }
+
+@router.get("/installer/download")
+def download_desktop_agent_installer():
+    """
+    Serves the packaged StudIQ Desktop Agent installer script/executable for 1-click website setup.
+    """
+    from fastapi.responses import FileResponse
+    import os
+    backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    installer_bat = os.path.join(backend_dir, "desktop_agent", "installer", "install_studiq_agent.bat")
+    
+    if os.path.exists(installer_bat):
+        return FileResponse(
+            installer_bat,
+            filename="install_studiq_agent.bat",
+            media_type="application/x-msdos-program"
+        )
+    raise HTTPException(status_code=404, detail="Installer file not found on server.")
+
+@router.get("/health")
+def get_monitoring_health():
+    """
+    Returns system monitoring health, last agent heartbeat delta, and telemetry status.
+    """
+    import time
+    global last_agent_ping_time, last_telemetry_payload
+    is_active = False
+    ping_delta = None
+    if last_agent_ping_time:
+        ping_delta = round(time.time() - last_agent_ping_time, 1)
+        if ping_delta < 30.0:
+            is_active = True
+
+    return {
+        "status": "healthy",
+        "agent_connected": is_active,
+        "last_ping_seconds_ago": ping_delta,
+        "last_telemetry": last_telemetry_payload,
+        "server_timestamp": time.time()
     }
 
 @router.post("/heartbeat")
@@ -159,7 +200,13 @@ def get_desktop_agent_status(student_id: int = 1, db: Session = Depends(get_db))
     }
 
 @router.get("/current-activity")
-def get_current_activity(student_id: int = 1, db: Session = Depends(get_db)):
+def get_current_activity(
+    student_id: int = 1,
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db)
+):
+    if current_user and current_user.get("role") == "student":
+        student_id = current_user.get("user_id", student_id)
     import time
     from datetime import datetime, date
     from app.ai.behavior_intelligence_engine import behavior_intelligence_engine
@@ -184,13 +231,13 @@ def get_current_activity(student_id: int = 1, db: Session = Depends(get_db)):
     game_secs = sum(l.duration for l in today_logs if l.category == "Gaming")
     util_secs = sum(l.duration for l in today_logs if l.category == "Utilities")
 
-    app_name = "VS Code"
-    window_title = "studiq / main.py"
+    app_name = "Desktop Agent"
+    window_title = "Awaiting Active Telemetry"
     website_url = ""
     category = "Educational"
-    confidence = 0.95
+    confidence = 0.85
     idle_secs = 0
-    sess_dur = 1420
+    sess_dur = 0
 
     if last_telemetry_payload:
         app_name = last_telemetry_payload.get("application_name", app_name)
@@ -202,12 +249,15 @@ def get_current_activity(student_id: int = 1, db: Session = Depends(get_db)):
         sess_dur = last_telemetry_payload.get("session_duration_seconds", sess_dur)
 
     latest_log = db.query(ActivityLog).filter(ActivityLog.student_id == student_id).order_by(ActivityLog.timestamp.desc()).first()
-    started_at = latest_log.timestamp.strftime("%H:%M:%S") if latest_log and latest_log.timestamp else "09:00:00"
+    started_at = latest_log.timestamp.strftime("%H:%M:%S") if latest_log and latest_log.timestamp else "N/A"
+
+    focus_res = central_metrics_engine.calculate_focus_index(db, student_id, 24.0)
+    burnout_res = central_metrics_engine.calculate_burnout_risk(db, student_id, 24.0)
 
     return {
         "current_application": app_name,
         "window_title": window_title,
-        "website_url": website_url,
+        "website_url": website_url if website_url else "N/A",
         "category": category,
         "confidence": confidence,
         "session_duration": sess_dur,
@@ -217,10 +267,11 @@ def get_current_activity(student_id: int = 1, db: Session = Depends(get_db)):
         "gaming_duration": game_secs,
         "utilities_duration": util_secs,
         "idle_seconds": idle_secs,
-        "focus_score": behavior_metrics.get("focus_score", 90.0),
-        "burnout_probability": behavior_metrics.get("burnout_score", 15.0),
-        "focus_breakdown": behavior_metrics.get("focus_breakdown", {}),
-        "burnout_breakdown": behavior_metrics.get("burnout_breakdown", {}),
+        "focus_score": focus_res["focus_score"],
+        "burnout_probability": burnout_res["probability"],
+        "burnout_risk_level": burnout_res["risk_level"],
+        "focus_breakdown": focus_res,
+        "burnout_breakdown": burnout_res,
         "current_activity_started_at": started_at,
         "agent_connected": is_connected,
         "entertainment_status": ent_status,

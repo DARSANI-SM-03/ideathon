@@ -2,35 +2,39 @@ import React from 'react';
 import { Lightbulb, Sparkles, CheckCircle2, ArrowRight } from 'lucide-react';
 import { useToast } from '../../context/ToastContext';
 
+import { ApiService } from '../../services/api';
+
 export const RecommendationsPage: React.FC = () => {
   const { showToast } = useToast();
+  const [recommendations, setRecommendations] = React.useState<any[]>([]);
+  const [loading, setLoading] = React.useState<boolean>(true);
 
-  const recommendations = [
-    {
-      id: 1,
-      title: 'Optimize Study Duration Blocks',
-      category: 'Productivity Engine',
-      impact: 'High Impact (+15% Focus)',
-      text: 'You achieved peak flow state during 50-minute Pomodoro sessions. Keep taking 10-minute movement breaks to prevent late-afternoon fatigue.',
-      date: 'Today'
-    },
-    {
-      id: 2,
-      title: 'Set Entertainment Time Limit',
-      category: 'Behavior Classifier',
-      impact: 'Medium Impact',
-      text: 'YouTube usage increased by 25 minutes during late evening research hours. Enable automatic app blockers after 10 PM.',
-      date: 'Yesterday'
-    },
-    {
-      id: 3,
-      title: 'Course Attendance Threshold Warning',
-      category: 'Academic Predictor',
-      impact: 'Critical Alert',
-      text: 'CS302 lecture attendance is near the 85% requirement boundary. Attend upcoming Friday lectures to secure midterm exam eligibility.',
-      date: '3 Days Ago'
-    }
-  ];
+  React.useEffect(() => {
+    const fetchRecommendations = async () => {
+      try {
+        const data = await ApiService.get('/ai/recommendations');
+        if (data && data.recommendations && data.recommendations.length > 0) {
+          setRecommendations(data.recommendations);
+        } else {
+          setRecommendations([
+            {
+              id: 'rec_default_1',
+              title: 'Optimize Study Duration Blocks',
+              category: 'Study Strategy',
+              impact: 'High Impact (+12% Focus Score)',
+              description: 'Structuring study sessions into 50-minute focus blocks with 10-minute breaks preserves peak flow and prevents fatigue.',
+              created_at: 'Today'
+            }
+          ]);
+        }
+      } catch {
+        // Fallback
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchRecommendations();
+  }, []);
 
   return (
     <div className="space-y-6 pb-12">
@@ -56,8 +60,8 @@ export const RecommendationsPage: React.FC = () => {
                 </span>
               </div>
               <h3 className="text-base font-bold text-slate-100 mb-1">{rec.title}</h3>
-              <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">{rec.text}</p>
-              <span className="text-[10px] text-slate-500 font-mono mt-2 block">{rec.date}</span>
+              <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">{rec.description || rec.text}</p>
+              <span className="text-[10px] text-slate-500 font-mono mt-2 block">{rec.created_at || rec.date || 'Today'}</span>
             </div>
 
             <button

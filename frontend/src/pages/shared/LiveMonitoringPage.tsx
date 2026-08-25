@@ -76,22 +76,22 @@ export const LiveMonitoringPage: React.FC = () => {
   const monitoringService = MonitoringService.getInstance();
 
   const [telemetry, setTelemetry] = useState<LiveTelemetryData>({
-    current_application: 'Visual Studio Code',
-    window_title: 'studiq / main.py',
+    current_application: 'Desktop Agent',
+    window_title: 'Connecting to Monitoring Service...',
     website_url: '',
     category: 'Educational',
-    confidence: 0.95,
-    session_duration: 1420,
-    educational_duration: 12600,
-    productive_duration: 5700,
-    entertainment_duration: 2700,
-    gaming_duration: 1800,
-    utilities_duration: 600,
+    confidence: 0.85,
+    session_duration: 0,
+    educational_duration: 0,
+    productive_duration: 0,
+    entertainment_duration: 0,
+    gaming_duration: 0,
+    utilities_duration: 0,
     idle_seconds: 0,
-    focus_score: 92,
+    focus_score: 80,
     burnout_probability: 15,
-    current_activity_started_at: '09:00:00',
-    agent_connected: true
+    current_activity_started_at: 'N/A',
+    agent_connected: false
   });
 
   const [isWarningOpen, setIsWarningOpen] = useState(false);

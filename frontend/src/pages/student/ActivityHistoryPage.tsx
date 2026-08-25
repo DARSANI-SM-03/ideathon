@@ -10,14 +10,32 @@ export const ActivityHistoryPage: React.FC = () => {
   const [testDuration, setTestDuration] = useState(15);
   const [ingestStatus, setIngestStatus] = useState<string | null>(null);
 
-  const [activities, setActivities] = useState([
-    { id: 1, app: 'VS Code', context: 'main.py - StudIQ AI Engine', category: 'Coding', duration: '45 Mins', focus: 92, burnout: 18, time: '10:15 AM' },
-    { id: 2, app: 'Google Chrome', context: 'arXiv: Deep Learning PDF', category: 'Research', duration: '32 Mins', focus: 88, burnout: 20, time: '09:30 AM' },
-    { id: 3, app: 'Canvas LMS', context: 'CS101 Quiz Submission', category: 'Study', duration: '25 Mins', focus: 95, burnout: 15, time: '08:45 AM' },
-    { id: 4, app: 'YouTube', context: 'Lo-Fi Chill Beats Stream', category: 'Entertainment', duration: '40 Mins', focus: 55, burnout: 35, time: 'Yesterday 11:30 PM' },
-    { id: 5, app: 'Discord', context: '#general - CS Study Group', category: 'Social Media', duration: '20 Mins', focus: 68, burnout: 25, time: 'Yesterday 09:00 PM' },
-    { id: 6, app: 'Notion', context: 'Exam Revision Notes', category: 'Study', duration: '50 Mins', focus: 90, burnout: 22, time: 'Yesterday 06:15 PM' },
-  ]);
+  const [activities, setActivities] = useState<any[]>([]);
+  const [avgFocus, setAvgFocus] = useState<number>(85.0);
+  const [avgBurnout, setAvgBurnout] = useState<number>(15.0);
+  const [totalRecords, setTotalRecords] = useState<number>(0);
+  const [loading, setLoading] = useState<boolean>(true);
+
+  const fetchHistory = async () => {
+    setLoading(true);
+    try {
+      const data = await ApiService.get(`/activity/history?timeframe=${encodeURIComponent(timeframe)}`);
+      if (data && data.items) {
+        setActivities(data.items);
+        setAvgFocus(data.avg_focus || 85.0);
+        setAvgBurnout(data.avg_burnout || 15.0);
+        setTotalRecords(data.total_records || data.items.length);
+      }
+    } catch {
+      // Graceful fallback to empty state
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  React.useEffect(() => {
+    fetchHistory();
+  }, [timeframe]);
 
   const handleTestTelemetry = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,19 +47,9 @@ export const ActivityHistoryPage: React.FC = () => {
         window_title: testTitle,
         duration: testDuration * 60
       });
-      const cat = result?.assigned_category || 'Coding';
+      const cat = result?.received_category || 'Educational';
       setIngestStatus(`Telemetry Logged! Classified as ${cat}`);
-      const newAct = {
-        id: Date.now(),
-        app: testApp,
-        context: testTitle,
-        category: cat,
-        duration: `${testDuration} Mins`,
-        focus: 90,
-        burnout: 20,
-        time: 'Just now'
-      };
-      setActivities([newAct, ...activities]);
+      fetchHistory();
     } catch {
       setIngestStatus('Local Telemetry Logged!');
     }
@@ -132,15 +140,15 @@ export const ActivityHistoryPage: React.FC = () => {
         </div>
         <div className="glass-card rounded-2xl p-4 border border-slate-800">
           <span className="text-xs text-slate-400 block mb-1">Avg Focus History</span>
-          <span className="text-lg font-bold text-emerald-400">86.4 Index</span>
+          <span className="text-lg font-bold text-emerald-400">{avgFocus} Index</span>
         </div>
         <div className="glass-card rounded-2xl p-4 border border-slate-800">
           <span className="text-xs text-slate-400 block mb-1">Avg Burnout History</span>
-          <span className="text-lg font-bold text-slate-300">22.5% Risk</span>
+          <span className="text-lg font-bold text-slate-300">{avgBurnout}% Risk</span>
         </div>
         <div className="glass-card rounded-2xl p-4 border border-slate-800">
           <span className="text-xs text-slate-400 block mb-1">Total Recorded Logs</span>
-          <span className="text-lg font-bold text-brand-400">{activities.length} Sessions</span>
+          <span className="text-lg font-bold text-brand-400">{totalRecords} Sessions</span>
         </div>
       </div>
 

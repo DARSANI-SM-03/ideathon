@@ -215,6 +215,31 @@ export class AgentBridgeService {
     return null;
   }
 
+  public static async downloadInstaller(): Promise<void> {
+    try {
+      const link = document.createElement('a');
+      link.href = `${API_BASE_URL}/monitoring/installer/download`;
+      link.download = 'install_studiq_agent.bat';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (e) {
+      console.error('Error downloading StudIQ Agent installer:', e);
+    }
+  }
+
+  public static async pollForBridgeActive(maxTimeoutMs: number = 30000, intervalMs: number = 1500): Promise<LocalBridgeStatus | null> {
+    const startTime = Date.now();
+    while (Date.now() - startTime < maxTimeoutMs) {
+      const status = await this.checkBridgeStatus();
+      if (status && status.bridge_status === 'active') {
+        return status;
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+    return null;
+  }
+
   public static async startAgent(token: string, backendUrl: string, studentId: number, studentCode: string): Promise<boolean> {
     try {
       const res = await fetch(`${LOCAL_BRIDGE_URL}/start`, {

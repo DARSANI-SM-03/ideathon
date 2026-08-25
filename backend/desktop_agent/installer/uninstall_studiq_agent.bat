@@ -7,6 +7,7 @@ echo Removing StudIQ Agent and registry protocol handler...
 echo.
 
 powershell -Command "Remove-Item -Path 'HKCU:\Software\Classes\studiq-agent' -Recurse -Force -ErrorAction SilentlyContinue"
+powershell -Command "Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'StudIQAgent' -ErrorAction SilentlyContinue"
 
 if exist "%APPDATA%\Microsoft\Windows\Start Menu\Programs\StudIQ Desktop Agent.lnk" (
     del "%APPDATA%\Microsoft\Windows\Start Menu\Programs\StudIQ Desktop Agent.lnk"

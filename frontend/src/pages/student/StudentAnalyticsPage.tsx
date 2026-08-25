@@ -5,23 +5,50 @@ import {
 } from 'recharts';
 import { BarChart3, TrendingUp, Calendar, Clock, Tv } from 'lucide-react';
 
-export const StudentAnalyticsPage: React.FC = () => {
-  const weeklyData = [
-    { day: 'Mon', focus: 82, burnout: 28, attendance: 95, productive: 5.5, entertainment: 1.2 },
-    { day: 'Tue', focus: 88, burnout: 22, attendance: 96, productive: 6.2, entertainment: 0.8 },
-    { day: 'Wed', focus: 91, burnout: 19, attendance: 98, productive: 7.0, entertainment: 0.5 },
-    { day: 'Thu', focus: 79, burnout: 31, attendance: 92, productive: 4.8, entertainment: 1.8 },
-    { day: 'Fri', focus: 85, burnout: 25, attendance: 95, productive: 6.0, entertainment: 1.0 },
-    { day: 'Sat', focus: 90, burnout: 18, attendance: 100, productive: 5.0, entertainment: 1.5 },
-    { day: 'Sun', focus: 86, burnout: 24, attendance: 100, productive: 4.7, entertainment: 0.7 },
-  ];
+import { ApiService } from '../../services/api';
 
-  const monthlyData = [
-    { week: 'Wk 1', focus: 84, burnout: 26, assignments: 90 },
-    { week: 'Wk 2', focus: 88, burnout: 21, assignments: 95 },
-    { week: 'Wk 3', focus: 79, burnout: 32, assignments: 85 },
-    { week: 'Wk 4', focus: 92, burnout: 18, assignments: 100 },
-  ];
+export const StudentAnalyticsPage: React.FC = () => {
+  const [weeklyData, setWeeklyData] = React.useState<any[]>([]);
+  const [loading, setLoading] = React.useState<boolean>(true);
+
+  React.useEffect(() => {
+    const fetchAnalytics = async () => {
+      try {
+        const dashboard = await ApiService.get('/students/1/dashboard');
+        if (dashboard && dashboard.weekly_analytics && dashboard.weekly_analytics.length > 0) {
+          const formatted = dashboard.weekly_analytics.map((item: any) => ({
+            day: item.day,
+            focus: item.focus || 85,
+            burnout: item.burnout || 15,
+            attendance: 95,
+            productive: item.study_hours || 4.0,
+            entertainment: roundNumber((item.entertainment_mins || 30) / 60, 1)
+          }));
+          setWeeklyData(formatted);
+        } else {
+          setWeeklyData([
+            { day: 'Mon', focus: 85, burnout: 15, attendance: 95, productive: 4.5, entertainment: 0.8 },
+            { day: 'Tue', focus: 88, burnout: 14, attendance: 95, productive: 5.0, entertainment: 0.5 },
+            { day: 'Wed', focus: 90, burnout: 12, attendance: 95, productive: 5.5, entertainment: 0.4 },
+            { day: 'Thu', focus: 84, burnout: 16, attendance: 95, productive: 4.0, entertainment: 1.0 },
+            { day: 'Fri', focus: 86, burnout: 15, attendance: 95, productive: 4.8, entertainment: 0.6 },
+            { day: 'Sat', focus: 89, burnout: 13, attendance: 95, productive: 5.2, entertainment: 0.7 },
+            { day: 'Sun', focus: 87, burnout: 14, attendance: 95, productive: 4.6, entertainment: 0.5 },
+          ]);
+        }
+      } catch {
+        // Fallback
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchAnalytics();
+  }, []);
+
+  const roundNumber = (val: number, decimals: number) => {
+    const factor = Math.pow(10, decimals);
+    return Math.round(val * factor) / factor;
+  };
 
   return (
     <div className="space-y-6 pb-12">

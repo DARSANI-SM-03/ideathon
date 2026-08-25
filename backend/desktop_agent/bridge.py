@@ -48,7 +48,10 @@ def get_script_dir() -> str:
 
 def log_debug(msg: str):
     try:
-        log_file = os.path.join(get_script_dir(), "agent_debug.log")
+        appdata = os.getenv("LOCALAPPDATA", get_script_dir())
+        log_dir = os.path.join(appdata, "StudIQ")
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, "agent_debug.log")
         with open(log_file, "a", encoding="utf-8") as f:
             f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Bridge] {msg}\n")
     except Exception:
@@ -226,24 +229,17 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
         # Suppress verbose default HTTP logging
         pass
 
-class ReusableHTTPServer(HTTPServer):
-    allow_reuse_address = True
-    def server_bind(self):
-        import socket
-        try:
-            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        except Exception:
-            pass
-        super().server_bind()
-
 def main():
     print("==========================================================")
     print("   STUDIQ LOCAL WINDOWS DESKTOP AGENT BRIDGE v1.0")
     print(f"   Listening on http://{HOST}:{PORT} (Localhost Only)")
     print("==========================================================")
     try:
-        server = ReusableHTTPServer((HOST, PORT), BridgeRequestHandler)
+        server = HTTPServer((HOST, PORT), BridgeRequestHandler)
         server.serve_forever()
+    except OSError as e:
+        log_debug(f"[Bridge Single Instance] Port {PORT} is already bound. Bridge daemon is already active: {e}")
+        sys.exit(0)
     except KeyboardInterrupt:
         print("\n[Bridge Shutting Down] Stopping bridge and active agent...")
         stop_agent_process()

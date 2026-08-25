@@ -106,14 +106,36 @@ def get_script_dir() -> str:
 
 def log_debug(msg: str):
     try:
-        log_file = os.path.join(get_script_dir(), "agent_debug.log")
+        appdata = os.getenv("LOCALAPPDATA", get_script_dir())
+        log_dir = os.path.join(appdata, "StudIQ")
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, "agent_debug.log")
         with open(log_file, "a", encoding="utf-8") as f:
             f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Agent] {msg}\n")
     except Exception:
         pass
 
+single_instance_lock_fd = None
+
+def acquire_single_instance_lock():
+    global single_instance_lock_fd
+    try:
+        appdata = os.getenv("LOCALAPPDATA", get_script_dir())
+        lock_dir = os.path.join(appdata, "StudIQ")
+        os.makedirs(lock_dir, exist_ok=True)
+        lock_file = os.path.join(lock_dir, "agent.lock")
+        single_instance_lock_fd = open(lock_file, "w")
+        if sys.platform == "win32":
+            import msvcrt
+            msvcrt.locking(single_instance_lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
+        return True
+    except (IOError, OSError):
+        log_debug("[Agent Single Instance] Another agent monitoring process is already running. Exiting duplicate instance.")
+        sys.exit(0)
+
 def main():
-    log_debug("agent.py main() started.")
+    acquire_single_instance_lock()
+    log_debug("agent.py main() started with single instance lock.")
     import argparse
     parser = argparse.ArgumentParser(description="StudIQ Windows Desktop Monitoring Agent")
     parser.add_argument("--backend-url", type=str, default="", help="FastAPI Backend URL")

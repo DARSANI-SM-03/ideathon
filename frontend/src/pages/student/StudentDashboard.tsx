@@ -103,15 +103,19 @@ export const StudentDashboard: React.FC = () => {
   const [focusBreakdown, setFocusBreakdown] = useState<any>(null);
   const [burnoutBreakdown, setBurnoutBreakdown] = useState<any>(null);
 
-  // Local Agent Bridge Launcher state
+  // Local Agent Bridge & Setup state
   const [showBridgeModal, setShowBridgeModal] = useState(false);
   const [isAgentStarting, setIsAgentStarting] = useState(false);
   const [isAgentStopping, setIsAgentStopping] = useState(false);
+  const [isDownloadingSetup, setIsDownloadingSetup] = useState(false);
   const [agentActionMessage, setAgentActionMessage] = useState<string | null>(null);
+  const [isMonitoringStoppedByUser, setIsMonitoringStoppedByUser] = useState(false);
+  const [recentActivities, setRecentActivities] = useState<Array<{ app: string; title: string; category: string; time: string }>>([]);
 
   const handleStartAgent = async () => {
     setIsAgentStarting(true);
     setAgentActionMessage(null);
+    setIsMonitoringStoppedByUser(false);
 
     // 1. Fetch scoped agent token from backend
     let agentToken = '';
@@ -136,64 +140,66 @@ export const StudentDashboard: React.FC = () => {
     // 2. Check if local bridge is ALREADY active on 127.0.0.1:8765
     let bridgeStatus = await AgentBridgeService.checkBridgeStatus();
     if (bridgeStatus && bridgeStatus.agent_running) {
-      setAgentActionMessage('🟢 Desktop agent is active and running.');
+      setAgentActionMessage('🟢 StudIQ Agent Connected & Monitoring Active.');
       setAgentConnected(true);
       setIsAgentStarting(false);
+      setShowBridgeModal(false);
       return;
     }
 
-    // 3. Trigger studiq-agent://start protocol launch
-    setAgentActionMessage('🚀 Launching StudIQ Windows Agent via studiq-agent:// protocol...');
-    invokeAgentProtocol('start', {
-      token: agentToken,
-      backend_url: API_BASE_URL,
-      student_id: String(studentId),
-      student_code: studentCode
-    });
-
-    // Also attempt local bridge start if bridge is up
+    // 3. Trigger local bridge start if bridge is active, else invoke studiq-agent://start
     if (bridgeStatus) {
+      setAgentActionMessage('🚀 Starting local monitoring service...');
       await AgentBridgeService.startAgent(agentToken, API_BASE_URL, studentId, studentCode);
-    }
-
-    // 4. Poll backend heartbeat for up to 15 seconds to confirm agent is actively sending data
-    let heartbeatConfirmed = false;
-    for (let i = 0; i < 8; i++) {
-      await new Promise(r => setTimeout(r, 1500));
-      try {
-        const statusRes = await fetch(`${API_BASE_URL}/monitoring/agent-status?student_id=${studentId}`);
-        if (statusRes.ok) {
-          const statusData = await statusRes.json();
-          if (statusData.connected) {
-            heartbeatConfirmed = true;
-            break;
-          }
-        }
-      } catch (e) {
-        // Retry poll
-      }
-    }
-
-    if (heartbeatConfirmed) {
-      setAgentActionMessage('🟢 Windows Agent launched & Backend Heartbeat confirmed!');
-      setAgentConnected(true);
     } else {
-      setAgentActionMessage('🔴 Agent launch triggered, but heartbeat not confirmed. Install agent if not present.');
+      setAgentActionMessage('🚀 Launching StudIQ Windows Agent via studiq-agent:// protocol...');
+      invokeAgentProtocol('start', {
+        token: agentToken,
+        backend_url: API_BASE_URL,
+        student_id: String(studentId),
+        student_code: studentCode
+      });
+    }
+
+    // 4. Poll for active bridge connection for up to 10 seconds
+    const activeBridge = await AgentBridgeService.pollForBridgeActive(10000, 1000);
+    if (activeBridge) {
+      setAgentActionMessage('🟢 StudIQ Agent Connected & Monitoring Active!');
+      setAgentConnected(true);
+      setShowBridgeModal(false);
+    } else {
+      setAgentActionMessage('🔴 StudIQ Agent setup required. Click Download & Setup Agent to complete 1-click install.');
       setAgentConnected(false);
       setShowBridgeModal(true);
     }
     setIsAgentStarting(false);
   };
 
+  const handleDownloadAndSetupAgent = async () => {
+    setIsDownloadingSetup(true);
+    setAgentActionMessage('⬇️ Download started. Run the installer to configure StudIQ Agent and launch monitoring automatically.');
+    await AgentBridgeService.downloadInstaller();
+
+    // Poll for bridge coming online after user runs setup
+    const activeBridge = await AgentBridgeService.pollForBridgeActive(45000, 1500);
+    if (activeBridge) {
+      setAgentActionMessage('🟢 StudIQ Agent Connected & Setup Complete!');
+      setAgentConnected(true);
+      setShowBridgeModal(false);
+    }
+    setIsDownloadingSetup(false);
+  };
+
   const handleStopAgent = async () => {
     setIsAgentStopping(true);
     setAgentActionMessage(null);
+    setIsMonitoringStoppedByUser(true);
     try {
-      // 1. Dispatch protocol stop and HTTP bridge stop
+      // Dispatch protocol stop and HTTP bridge stop
       invokeAgentProtocol('stop');
       await AgentBridgeService.stopAgent();
       
-      setAgentActionMessage('🔴 Monitoring Agent stopped.');
+      setAgentActionMessage('🔴 Monitoring Stopped.');
       setAgentConnected(false);
     } catch (err) {
       console.error('Error stopping desktop agent:', err);
@@ -397,7 +403,7 @@ export const StudentDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* LOCAL BRIDGE INSTALL / SETUP GUIDE MODAL */}
+      {/* AUTOMATED DESKTOP AGENT SETUP MODAL */}
       {showBridgeModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
           <div className="bg-slate-900 border border-brand-500/40 rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-5">
@@ -407,8 +413,8 @@ export const StudentDashboard: React.FC = () => {
                   <Laptop className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-black text-white">StudIQ Desktop Agent Setup</h3>
-                  <span className="text-xs font-mono text-slate-400">Local Agent Bridge Not Detected</span>
+                  <h3 className="text-base font-black text-white">StudIQ Agent Setup Required</h3>
+                  <span className="text-xs font-mono text-slate-400">Automated 1-Click Windows Setup</span>
                 </div>
               </div>
               <button
@@ -419,34 +425,46 @@ export const StudentDashboard: React.FC = () => {
               </button>
             </div>
 
-            <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-4 space-y-3">
+            <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-4 space-y-4">
               <p className="text-xs text-slate-300 leading-relaxed font-medium">
-                StudIQ Desktop Agent runs locally on your Windows device to track active study process window titles.
+                To enable automatic focus analysis and burnout tracking, install the lightweight StudIQ Windows Agent. No Command Prompt or terminal execution required.
               </p>
               
-              <div className="space-y-2 text-xs text-slate-400">
-                <div className="font-bold text-slate-200">1-Time Windows Setup (No Command Prompt Required):</div>
-                <ol className="list-decimal list-inside space-y-1.5 font-mono text-[11px] text-slate-300">
-                  <li>Run <span className="text-brand-400 font-bold">install_studiq_agent.bat</span> inside <span className="text-slate-400">backend/desktop_agent/installer</span>.</li>
-                  <li>This registers the <span className="text-emerald-400 font-bold">studiq-agent://</span> custom URI scheme in Windows Registry.</li>
-                  <li>Click <span className="text-emerald-400 font-bold">Start Monitoring Agent</span> on the web dashboard — Windows launches the agent automatically!</li>
-                </ol>
+              <div className="space-y-2 text-xs text-slate-300">
+                <div className="font-bold text-slate-200">Automated Setup Steps:</div>
+                <div className="space-y-2 text-[11px]">
+                  <div className="flex items-center gap-2 p-2 rounded-lg bg-slate-900 border border-slate-800">
+                    <span className="w-5 h-5 rounded-full bg-brand-500/20 text-brand-400 flex items-center justify-center font-bold font-mono text-[10px]">1</span>
+                    <span>Click <strong>Download & Setup Agent</strong> below.</span>
+                  </div>
+                  <div className="flex items-center gap-2 p-2 rounded-lg bg-slate-900 border border-slate-800">
+                    <span className="w-5 h-5 rounded-full bg-brand-500/20 text-brand-400 flex items-center justify-center font-bold font-mono text-[10px]">2</span>
+                    <span>Run the downloaded setup installer (registers <code>studiq-agent://</code> and configures background startup).</span>
+                  </div>
+                  <div className="flex items-center gap-2 p-2 rounded-lg bg-slate-900 border border-slate-800">
+                    <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold font-mono text-[10px]">3</span>
+                    <span>The web dashboard will auto-detect the agent and connect automatically!</span>
+                  </div>
+                </div>
               </div>
 
-              <div className="bg-brand-500/10 border border-brand-500/20 rounded-lg p-2.5 flex items-start gap-2">
-                <ShieldCheck className="w-4 h-4 text-brand-400 shrink-0 mt-0.5" />
-                <p className="text-[11px] text-brand-300 leading-tight">
-                  <strong className="font-semibold text-white">Privacy Guarantee:</strong> Zero access to passwords, banking applications, gallery photos, private files, or clipboard data.
-                </p>
+              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3 flex items-start gap-2.5">
+                <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <div className="text-[11px] text-slate-300 leading-tight space-y-1">
+                  <strong className="font-bold text-emerald-400">Strict Privacy Guarantee:</strong>
+                  <p>StudIQ tracks only active application window titles to calculate study focus. It <strong>never</strong> accesses passwords, keystrokes, clipboard, screenshots, personal files, or photos.</p>
+                </div>
               </div>
             </div>
 
             <div className="flex items-center justify-end gap-3 pt-1">
               <button
-                onClick={handleStartAgent}
-                className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 text-xs font-bold transition shadow-lg shadow-emerald-500/20 flex items-center gap-2"
+                onClick={handleDownloadAndSetupAgent}
+                disabled={isDownloadingSetup}
+                className="px-5 py-2.5 rounded-xl bg-brand-500 hover:bg-brand-600 disabled:opacity-50 text-white text-xs font-bold transition shadow-lg shadow-brand-500/20 flex items-center gap-2"
               >
-                <CheckCircle2 className="w-4 h-4" /> Check & Connect Again
+                <Download className="w-4 h-4" />
+                {isDownloadingSetup ? 'Preparing Installer...' : 'Download & Setup Agent'}
               </button>
               <button
                 onClick={() => setShowBridgeModal(false)}
@@ -466,9 +484,11 @@ export const StudentDashboard: React.FC = () => {
             <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-bold border ${
               agentConnected
                 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                : 'bg-rose-500/10 text-rose-400 border-rose-500/30 animate-pulse'
+                : isMonitoringStoppedByUser
+                ? 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                : 'bg-amber-500/10 text-amber-400 border-amber-500/30 animate-pulse'
             }`}>
-              {agentConnected ? '🟢 Desktop Agent Connected' : '🔴 Desktop Agent Offline'}
+              {agentConnected ? '🟢 StudIQ Agent Connected' : isMonitoringStoppedByUser ? '🔴 Monitoring Stopped' : '🟠 StudIQ Agent Setup / Offline'}
             </span>
             <span className="text-[11px] font-mono text-slate-400">
               • Last Sync: {lastUpdatedSecs <= 2 ? 'Just now' : `${lastUpdatedSecs}s ago`}
@@ -498,7 +518,9 @@ export const StudentDashboard: React.FC = () => {
           <div className={`w-11 h-11 rounded-xl flex items-center justify-center font-bold shrink-0 border ${
             agentConnected
               ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-              : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+              : isMonitoringStoppedByUser
+              ? 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+              : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
           }`}>
             <Activity className="w-6 h-6" />
           </div>
@@ -508,9 +530,11 @@ export const StudentDashboard: React.FC = () => {
               <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold border ${
                 agentConnected
                   ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                  : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                  : isMonitoringStoppedByUser
+                  ? 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                  : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
               }`}>
-                {agentConnected ? '🟢 Monitoring Active' : '🔴 Monitoring Inactive'}
+                {agentConnected ? '🟢 Monitoring Active' : isMonitoringStoppedByUser ? '🔴 Monitoring Stopped' : '🟠 Setup Required'}
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-1 max-w-2xl leading-relaxed">
@@ -526,14 +550,26 @@ export const StudentDashboard: React.FC = () => {
 
         <div className="flex items-center gap-3 shrink-0">
           {!agentConnected ? (
-            <button
-              onClick={handleStartAgent}
-              disabled={isAgentStarting}
-              className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-slate-950 text-xs font-bold flex items-center gap-2 transition shadow-lg shadow-emerald-500/20"
-            >
-              <Play className="w-4 h-4 fill-slate-950" />
-              {isAgentStarting ? 'Starting Agent...' : 'Start Monitoring Agent'}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleStartAgent}
+                disabled={isAgentStarting}
+                className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-slate-950 text-xs font-bold flex items-center gap-2 transition shadow-lg shadow-emerald-500/20"
+              >
+                <Play className="w-4 h-4 fill-slate-950" />
+                {isAgentStarting ? 'Starting Agent...' : 'Start Monitoring'}
+              </button>
+
+              <button
+                onClick={handleDownloadAndSetupAgent}
+                disabled={isDownloadingSetup}
+                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-brand-400 text-xs font-bold border border-slate-700 flex items-center gap-2 transition"
+                title="Download 1-Click Installer Setup"
+              >
+                <Download className="w-4 h-4" />
+                {isDownloadingSetup ? 'Downloading...' : 'Setup Agent'}
+              </button>
+            </div>
           ) : (
             <button
               onClick={handleStopAgent}
@@ -541,7 +577,7 @@ export const StudentDashboard: React.FC = () => {
               className="px-5 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 disabled:opacity-50 text-rose-400 text-xs font-bold flex items-center gap-2 transition"
             >
               <Square className="w-4 h-4 fill-rose-400" />
-              {isAgentStopping ? 'Stopping...' : 'Stop Agent'}
+              {isAgentStopping ? 'Stopping...' : 'Stop Monitoring'}
             </button>
           )}
 
@@ -610,6 +646,48 @@ export const StudentDashboard: React.FC = () => {
             </span>
           </div>
         )}
+      </div>
+
+      {/* DIGITAL PRIVACY & TELEMETRY DISCLOSURE CARD */}
+      <div className="glass-card rounded-2xl p-5 border border-slate-800 bg-slate-900/60 space-y-3">
+        <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-5 h-5 text-emerald-400" />
+            <h3 className="text-sm font-bold text-white">Digital Privacy & Data Collection Transparency</h3>
+          </div>
+          <span className="text-[11px] font-mono text-emerald-400 font-semibold">Strict Privacy Safeguards Active</span>
+        </div>
+
+        <p className="text-xs text-slate-300 leading-relaxed">
+          StudIQ monitors active application and window titles to understand study patterns and compute Focus & Burnout analytics. It does <strong>not</strong> collect passwords, keystrokes, clipboard contents, screenshots, personal files, photos, or banking information.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1 text-xs">
+          <div className="p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/20 space-y-1.5">
+            <div className="font-bold text-emerald-400 flex items-center gap-1.5">
+              <span>✅ What StudIQ Collects:</span>
+            </div>
+            <ul className="space-y-1 text-[11px] text-slate-300">
+              <li>• Active application process names (e.g., Code.exe, Chrome.exe)</li>
+              <li>• Active window title metadata strings</li>
+              <li>• Activity duration & system idle time intervals</li>
+              <li>• Categorized study metadata (Educational, Productive, Entertainment)</li>
+            </ul>
+          </div>
+
+          <div className="p-3 rounded-xl bg-rose-500/5 border border-rose-500/20 space-y-1.5">
+            <div className="font-bold text-rose-400 flex items-center gap-1.5">
+              <span>❌ What StudIQ NEVER Collects:</span>
+            </div>
+            <ul className="space-y-1 text-[11px] text-slate-300">
+              <li>• Passwords, login credentials, or auth keys</li>
+              <li>• Keystrokes or keyboard input (no keylogging)</li>
+              <li>• Clipboard contents or copy-paste text</li>
+              <li>• Screen recordings, screenshots, or webcam video</li>
+              <li>• Personal documents, photos, gallery, or banking data</li>
+            </ul>
+          </div>
+        </div>
       </div>
 
       {/* TOP GAUGES & TELEMETRY TIME CARDS */}

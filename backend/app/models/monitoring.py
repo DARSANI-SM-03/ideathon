@@ -195,5 +195,36 @@ class HistoricalTrendSummary(Base):
     areas_of_concern = Column(Text, nullable=True)  # JSON text
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
 
+class StudentSettings(Base):
+    __tablename__ = "student_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=False, unique=True)
+    theme = Column(String, default="dark")
+    daily_study_target_mins = Column(Integer, default=240)
+    daily_entertainment_limit_mins = Column(Integer, default=60)
+    pomodoro_focus_mins = Column(Integer, default=50)
+    pomodoro_break_mins = Column(Integer, default=10)
+    idle_threshold_secs = Column(Integer, default=300)
+    notifications_enabled = Column(Boolean, default=True)
+    sound_alerts_enabled = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class StudySession(Base):
+    __tablename__ = "study_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=False)
+    session_type = Column(String, default="Pomodoro")  # Pomodoro, Deep Work, Free Study
+    planned_duration_mins = Column(Integer, default=50)
+    actual_duration_secs = Column(Integer, default=0)
+    started_at = Column(DateTime, default=datetime.utcnow)
+    ended_at = Column(DateTime, nullable=True)
+    completed = Column(Boolean, default=False)
+    focus_score = Column(Float, default=85.0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 
 

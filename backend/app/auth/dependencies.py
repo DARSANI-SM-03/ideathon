@@ -92,3 +92,11 @@ def require_role(roles: list[str]):
             )
         return current_user
     return role_checker
+
+def get_current_user_optional(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    if not token:
+        return None
+    try:
+        return get_current_user(token, db)
+    except Exception:
+        return None

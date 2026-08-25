@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from app.database.session import get_db
 from app.ai.prediction_engine import ai_prediction_engine
+from app.ai.central_metrics_engine import central_metrics_engine
 
 router = APIRouter(prefix="/ai", tags=["AI Prediction & Recommendations"])
 
@@ -10,13 +11,16 @@ def get_student_prediction(student_id: int = 1, db: Session = Depends(get_db)):
     """Calculates AI behavioral risk predictions, probabilities, and detected patterns."""
     return ai_prediction_engine.predict_student_behavior(db, student_id)
 
+@router.get("/recommendations")
 @router.get("/recommendations/{student_id}")
 def get_student_recommendations(student_id: int = 1, db: Session = Depends(get_db)):
-    """Returns personalized actionable recommendations generated from real telemetry."""
+    """Returns evidence-backed recommendations generated from real telemetry and academic records."""
+    recs = central_metrics_engine.generate_evidence_based_recommendations(db, student_id)
     pred = ai_prediction_engine.predict_student_behavior(db, student_id)
     return {
         "student_id": student_id,
-        "recommendations": pred["recommendations"],
+        "recommendations": recs,
+        "raw_text_recommendations": pred["recommendations"],
         "detected_patterns": pred["detected_patterns"]
     }
 

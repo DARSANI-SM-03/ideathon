@@ -28,6 +28,12 @@ import urllib.error
 import json
 from typing import Dict, Any, Optional
 
+# Top-level imports for PyInstaller executable bundling
+import bridge
+import agent
+import collector
+import config
+
 LOCAL_BRIDGE_URL = "http://127.0.0.1:8765"
 ALLOWED_ACTIONS = {"start", "stop", "status", "health", "daemon"}
 
@@ -38,7 +44,10 @@ def get_script_dir() -> str:
 
 def log_debug(msg: str):
     try:
-        log_file = os.path.join(get_script_dir(), "agent_debug.log")
+        appdata = os.getenv("LOCALAPPDATA", get_script_dir())
+        log_dir = os.path.join(appdata, "StudIQ")
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, "agent_debug.log")
         with open(log_file, "a", encoding="utf-8") as f:
             f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
     except Exception:

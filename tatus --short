@@ -1,0 +1,45 @@
+warning: in the working copy of 'backend/app/auth/dependencies.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/app/models/monitoring.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/app/routers/activity_router.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/app/routers/ai_router.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/app/routers/monitoring_router.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/app/routers/report_router.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/app/routers/student_router.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/desktop_agent/agent.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/desktop_agent/bridge.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/desktop_agent/build_agent_exe.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/desktop_agent/installer/install_agent.ps1', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/desktop_agent/installer/uninstall_studiq_agent.bat', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/desktop_agent/protocol_handler.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/components/ui/FocusTimer.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/pages/shared/LiveMonitoringPage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/pages/student/ActivityHistoryPage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/pages/student/RecommendationsPage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/pages/student/ReportsPage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/pages/student/StudentAnalyticsPage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/pages/student/StudentDashboard.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/pages/student/StudentSettingsPage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/services/monitoringService.ts', LF will be replaced by CRLF the next time Git touches it
+ backend/app/auth/dependencies.py                   |   8 [32m+[m
+ backend/app/models/monitoring.py                   |  31 [32m+++[m
+ backend/app/routers/activity_router.py             |  77 [32m+++++++[m[31m-[m
+ backend/app/routers/ai_router.py                   |   8 [32m+[m[31m-[m
+ backend/app/routers/monitoring_router.py           |  75 [32m+++++[m[31m--[m
+ backend/app/routers/report_router.py               |  13 [32m++[m
+ backend/app/routers/student_router.py              |  89 [32m+++++++++[m
+ backend/desktop_agent/agent.py                     |  26 [32m++[m[31m-[m
+ backend/desktop_agent/bridge.py                    |  20 [32m+[m[31m-[m
+ backend/desktop_agent/build_agent_exe.py           |   7 [31m-[m
+ backend/desktop_agent/installer/install_agent.ps1  |  11 [32m++[m
+ .../installer/uninstall_studiq_agent.bat           |   1 [32m+[m
+ backend/desktop_agent/protocol_handler.py          |  11 [32m+[m[31m-[m
+ frontend/src/components/ui/FocusTimer.tsx          |  25 [32m++[m[31m-[m
+ frontend/src/pages/shared/LiveMonitoringPage.tsx   |  24 [32m+[m[31m--[m
+ frontend/src/pages/student/ActivityHistoryPage.tsx |  54 [32m+++[m[31m---[m
+ frontend/src/pages/student/RecommendationsPage.tsx |  60 [32m+++[m[31m---[m
+ frontend/src/pages/student/ReportsPage.tsx         |  99 [32m++++++[m[31m----[m
+ .../src/pages/student/StudentAnalyticsPage.tsx     |  57 [32m++++[m[31m--[m
+ frontend/src/pages/student/StudentDashboard.tsx    | 216 [32m++++++++++++++[m[31m-------[m
+ frontend/src/pages/student/StudentSettingsPage.tsx |  42 [32m++[m[31m--[m
+ frontend/src/services/monitoringService.ts         |  25 [32m+++[m
+ 22 files changed, 742 insertions(+), 237 deletions(-)

@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Play, Pause, RotateCcw, Sliders, Timer as TimerIcon } from 'lucide-react';
 import { useToast } from '../../context/ToastContext';
 
+import { ApiService } from '../../services/api';
+
 export const FocusTimer: React.FC = () => {
   const { showToast } = useToast();
   const [studyMinutes, setStudyMinutes] = useState(50);
@@ -11,6 +13,7 @@ export const FocusTimer: React.FC = () => {
   const [timeLeft, setTimeLeft] = useState(50 * 60);
   const [isRunning, setIsRunning] = useState(false);
   const [showCustomModal, setShowCustomModal] = useState(false);
+  const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
 
   useEffect(() => {
     let timer: any = null;
@@ -21,7 +24,10 @@ export const FocusTimer: React.FC = () => {
     } else if (timeLeft === 0 && isRunning) {
       setIsRunning(false);
       if (mode === 'study') {
-        showToast('Study Session Complete! Take a 10-minute break.', 'success');
+        showToast('Study Session Complete! Logged to Activity History.', 'success');
+        if (activeSessionId) {
+          ApiService.post(`/students/sessions/${activeSessionId}`, { completed: true, actual_duration_secs: studyMinutes * 60 }).catch(() => {});
+        }
         setMode('break');
         setTimeLeft(breakMinutes * 60);
       } else {
@@ -31,9 +37,22 @@ export const FocusTimer: React.FC = () => {
       }
     }
     return () => clearInterval(timer);
-  }, [isRunning, timeLeft, mode, studyMinutes, breakMinutes, showToast]);
+  }, [isRunning, timeLeft, mode, studyMinutes, breakMinutes, showToast, activeSessionId]);
 
-  const toggleTimer = () => setIsRunning(!isRunning);
+  const toggleTimer = async () => {
+    if (!isRunning && mode === 'study') {
+      try {
+        const res = await ApiService.post('/students/sessions', {
+          session_type: 'Pomodoro',
+          planned_duration_mins: studyMinutes
+        });
+        if (res && res.session_id) {
+          setActiveSessionId(res.session_id);
+        }
+      } catch {}
+    }
+    setIsRunning(!isRunning);
+  };
 
   const resetTimer = () => {
     setIsRunning(false);

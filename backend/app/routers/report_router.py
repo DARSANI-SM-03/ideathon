@@ -8,8 +8,21 @@ from app.database.session import get_db
 from app.models.monitoring import ActivityLog, WarningLog, BehaviorMetricRecord, ParentAlert
 from app.models.user import Student
 from app.ai.behavior_intelligence_engine import behavior_intelligence_engine
+from app.ai.central_metrics_engine import central_metrics_engine
 
 router = APIRouter(prefix="/reports", tags=["Reports & Exports"])
+
+@router.get("/summary")
+def get_report_summary(
+    student_id: int = 1,
+    period: str = Query("Weekly", description="Weekly, Monthly, or Semester"),
+    db: Session = Depends(get_db)
+):
+    """
+    Returns structured report metrics for Weekly, Monthly, or Semester reports.
+    Derived centrally from real database telemetry and metrics engine.
+    """
+    return central_metrics_engine.aggregate_report_data(db, student_id, period)
 
 @router.get("/warnings/{student_id}")
 def get_student_warnings(student_id: int, db: Session = Depends(get_db)):

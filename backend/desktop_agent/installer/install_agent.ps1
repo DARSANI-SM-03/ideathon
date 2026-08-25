@@ -60,6 +60,12 @@ New-Item -Path $CmdKey -Force | Out-Null
 $CommandValue = '"' + $ExePath + '" "%1"'
 Set-ItemProperty -Path $CmdKey -Name "(default)" -Value $CommandValue -Force
 
+# 5b. Configure Automatic Windows Startup (HKCU Run Key)
+Write-Host "[Installer] Configuring automatic Windows background startup..." -ForegroundColor Green
+$RunKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$AutoStartCmd = '"' + $ExePath + '" "studiq-agent://start"'
+Set-ItemProperty -Path $RunKey -Name "StudIQAgent" -Value $AutoStartCmd -Force
+
 # 6. Create Start Menu & Desktop Shortcuts using Environment Folder Paths
 $WshShell = New-Object -ComObject WScript.Shell
 
@@ -125,10 +131,15 @@ Write-Host "==========================================================" -Foregro
 
 cmd.exe /c "reg query HKCU\Software\Classes\studiq-agent\shell\open\command"
 
+# 9. Launch Agent Background Service
+Write-Host "[Installer] Launching background StudIQ Agent daemon..." -ForegroundColor Green
+Start-Process -FilePath $ExePath -ArgumentList "studiq-agent://start" -WindowStyle Hidden
+
 Write-Host ""
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host " SUCCESS: StudIQ Desktop Agent Installed Successfully!" -ForegroundColor Green
 Write-Host " Protocol Handler Registered : studiq-agent://" -ForegroundColor Green
+Write-Host " Windows Startup Configured  : HKCU Run Key" -ForegroundColor Green
 Write-Host " Installation Path          : $InstallDir" -ForegroundColor Green
 Write-Host " Executable Verified        : $ExePath" -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor Green

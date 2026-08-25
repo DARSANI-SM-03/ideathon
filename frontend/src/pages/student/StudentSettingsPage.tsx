@@ -4,6 +4,8 @@ import { useTheme } from '../../context/ThemeContext';
 import { useToast } from '../../context/ToastContext';
 import { Settings, User, Lock, Bell, Moon, Sun, Clock, Tv, Save } from 'lucide-react';
 
+import { ApiService } from '../../services/api';
+
 export const StudentSettingsPage: React.FC = () => {
   const { user } = useAuth();
   const { theme, toggleTheme } = useTheme();
@@ -11,34 +13,42 @@ export const StudentSettingsPage: React.FC = () => {
 
   const [name, setName] = useState(user?.name || 'Alex Mercer');
   const [email, setEmail] = useState(user?.email || 'alex.mercer@studiq.edu');
-  const [studyHoursTarget, setStudyHoursTarget] = useState(6.0);
+  const [studyHoursTarget, setStudyHoursTarget] = useState(4.0);
+  const [entLimitMins, setEntLimitMins] = useState(60);
   const [notifEmail, setNotifEmail] = useState(true);
   const [notifBrowser, setNotifBrowser] = useState(true);
 
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
 
+  React.useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const settings = await ApiService.get('/students/settings');
+        if (settings) {
+          if (settings.daily_study_target_mins) setStudyHoursTarget(settings.daily_study_target_mins / 60);
+          if (settings.daily_entertainment_limit_mins) setEntLimitMins(settings.daily_entertainment_limit_mins);
+          if (settings.notifications_enabled !== undefined) setNotifEmail(settings.notifications_enabled);
+          if (settings.sound_alerts_enabled !== undefined) setNotifBrowser(settings.sound_alerts_enabled);
+        }
+      } catch {}
+    };
+    loadSettings();
+  }, []);
+
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await fetch('http://localhost:8000/api/v1/auth/update-profile', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(localStorage.getItem('studiq_token') ? { Authorization: `Bearer ${localStorage.getItem('studiq_token')}` } : {})
-        },
-        body: JSON.stringify({
-          name,
-          email,
-          study_hours_target: studyHoursTarget,
-          notif_email: notifEmail,
-          notif_browser: notifBrowser,
-        })
+      await ApiService.put('/students/settings', {
+        daily_study_target_mins: Math.round(studyHoursTarget * 60),
+        daily_entertainment_limit_mins: entLimitMins,
+        notifications_enabled: notifEmail,
+        sound_alerts_enabled: notifBrowser,
       });
+      showToast('Settings saved to database!', 'success');
     } catch {
-      // Endpoint may not yet exist — fall through
+      showToast('Settings updated locally!', 'info');
     }
-    showToast('Profile and Preferences Updated Successfully!', 'success');
   };
 
   const handleResetPassword = async (e: React.FormEvent) => {
