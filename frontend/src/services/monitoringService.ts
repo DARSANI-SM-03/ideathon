@@ -231,15 +231,15 @@ export class AgentBridgeService {
     }
   }
 
-  public static async pollForBridgeActive(maxTimeoutMs: number = 60000, intervalMs: number = 1500): Promise<LocalBridgeStatus | null> {
+  public static async pollForBridgeActive(maxTimeoutMs: number = 60000, intervalMs: number = 1000): Promise<LocalBridgeStatus | null> {
     const startTime = Date.now();
     while (Date.now() - startTime < maxTimeoutMs) {
       const status = await this.checkBridgeStatus();
-      if (status && (status.bridge_status === 'active' || status.agent_running)) {
+      if (status && (status.bridge_status === 'active' || status.agent_running || (status as any).running)) {
         return status;
       }
       try {
-        const backendRes = await fetch(`${API_BASE_URL}/monitoring/agent-status`, { signal: AbortSignal.timeout(1500) });
+        const backendRes = await fetch(`${API_BASE_URL}/monitoring/agent-status`, { signal: AbortSignal.timeout(1000) });
         if (backendRes.ok) {
           const backendData = await backendRes.json();
           if (backendData.connected) {

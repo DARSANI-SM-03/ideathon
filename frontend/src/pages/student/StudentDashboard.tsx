@@ -112,6 +112,23 @@ export const StudentDashboard: React.FC = () => {
   const [isMonitoringStoppedByUser, setIsMonitoringStoppedByUser] = useState(false);
   const [recentActivities, setRecentActivities] = useState<Array<{ app: string; title: string; category: string; time: string }>>([]);
 
+  const checkAgentConnection = async (): Promise<boolean> => {
+    // 1. Primary Source of Truth: Local Bridge on 127.0.0.1:8765
+    const bridgeStatus = await AgentBridgeService.checkBridgeStatus();
+    if (bridgeStatus && (bridgeStatus.bridge_status === 'active' || bridgeStatus.agent_running || (bridgeStatus as any).running)) {
+      return true;
+    }
+    // 2. Secondary Fallback: Backend REST API
+    try {
+      const backendRes = await fetch(`${API_BASE_URL}/monitoring/agent-status`, { signal: AbortSignal.timeout(1500) });
+      if (backendRes.ok) {
+        const backendData = await backendRes.json();
+        return Boolean(backendData.connected);
+      }
+    } catch (e) {}
+    return false;
+  };
+
   const handleStartAgent = async () => {
     setIsAgentStarting(true);
     setAgentActionMessage(null);
@@ -139,7 +156,8 @@ export const StudentDashboard: React.FC = () => {
 
     // 2. Check if local bridge is ALREADY active on 127.0.0.1:8765
     let bridgeStatus = await AgentBridgeService.checkBridgeStatus();
-    if (bridgeStatus && bridgeStatus.agent_running) {
+    if (bridgeStatus && (bridgeStatus.bridge_status === 'active' || bridgeStatus.agent_running || (bridgeStatus as any).running)) {
+      await AgentBridgeService.startAgent(agentToken, API_BASE_URL, studentId, studentCode);
       setAgentActionMessage('🟢 StudIQ Agent Connected & Monitoring Active.');
       setAgentConnected(true);
       setIsAgentStarting(false);
@@ -148,22 +166,17 @@ export const StudentDashboard: React.FC = () => {
     }
 
     // 3. Trigger local bridge start if bridge is active, else invoke studiq-agent://start
-    if (bridgeStatus) {
-      setAgentActionMessage('🚀 Starting local monitoring service...');
-      await AgentBridgeService.startAgent(agentToken, API_BASE_URL, studentId, studentCode);
-    } else {
-      setAgentActionMessage('🚀 Launching StudIQ Windows Agent via studiq-agent:// protocol...');
-      invokeAgentProtocol('start', {
-        token: agentToken,
-        backend_url: API_BASE_URL,
-        student_id: String(studentId),
-        student_code: studentCode
-      });
-    }
+    invokeAgentProtocol('start', {
+      token: agentToken,
+      backend_url: API_BASE_URL,
+      student_id: String(studentId),
+      student_code: studentCode
+    });
 
     // 4. Poll for active bridge connection for up to 10 seconds
     const activeBridge = await AgentBridgeService.pollForBridgeActive(10000, 1000);
     if (activeBridge) {
+      await AgentBridgeService.startAgent(agentToken, API_BASE_URL, studentId, studentCode);
       setAgentActionMessage('🟢 StudIQ Agent Connected & Monitoring Active!');
       setAgentConnected(true);
       setShowBridgeModal(false);
@@ -177,12 +190,29 @@ export const StudentDashboard: React.FC = () => {
 
   const handleDownloadAndSetupAgent = async () => {
     setIsDownloadingSetup(true);
-    setAgentActionMessage('⬇️ Downloaded StudIQAgentSetup.exe. Please double-click to run the setup installer.');
+    setAgentActionMessage('⬇️ Downloaded StudIQAgentSetup.exe. Please double-click to run setup.');
     await AgentBridgeService.downloadInstaller();
 
+    let agentToken = '';
+    let studentId = user?.id || 1;
+    let studentCode = user?.user_identifier || 'STU-2026-001';
+    try {
+      const tokenRes = await fetch(`${API_BASE_URL}/monitoring/agent/session`, {
+        method: 'POST',
+        headers: ApiService.getHeaders()
+      });
+      if (tokenRes.ok) {
+        const tokenData = await tokenRes.json();
+        agentToken = tokenData.agent_token || '';
+        studentId = tokenData.student_id || studentId;
+        studentCode = tokenData.student_code || studentCode;
+      }
+    } catch (e) {}
+
     // Poll for bridge coming online after user runs setup
-    const activeBridge = await AgentBridgeService.pollForBridgeActive(60000, 1500);
+    const activeBridge = await AgentBridgeService.pollForBridgeActive(60000, 1000);
     if (activeBridge) {
+      await AgentBridgeService.startAgent(agentToken, API_BASE_URL, studentId, studentCode);
       setAgentActionMessage('🟢 StudIQ Agent Connected & Setup Complete!');
       setAgentConnected(true);
       setShowBridgeModal(false);
@@ -286,19 +316,22 @@ export const StudentDashboard: React.FC = () => {
       })
       .catch(() => {});
 
+    // Initial immediate check of local agent connection
+    checkAgentConnection().then(isConnected => {
+      setAgentConnected(isConnected);
+      if (isConnected) {
+        setShowBridgeModal(false);
+      }
+    });
+
     // 3-second live polling loop
-    const pollInterval = setInterval(() => {
-      // 1. Poll Agent Connection Status
-      fetch(`${API_BASE_URL}/monitoring/agent-status`)
-        .then(r => r.json())
-        .then(res => {
-          setAgentConnected(res.connected);
-          if (res.last_ping_seconds_ago !== null && res.last_ping_seconds_ago !== undefined) {
-            setLastUpdatedSecs(Math.round(res.last_ping_seconds_ago));
-          }
-          if (res.entertainment_status) setEntertainmentStatus(res.entertainment_status);
-        })
-        .catch(() => setAgentConnected(false));
+    const pollInterval = setInterval(async () => {
+      // 1. Poll Agent Connection Status (local bridge priority)
+      const isConnected = await checkAgentConnection();
+      setAgentConnected(isConnected);
+      if (isConnected) {
+        setShowBridgeModal(false);
+      }
 
       // 2. Poll Current Monitored Activity
       fetch(`${API_BASE_URL}/monitoring/current-activity`)
