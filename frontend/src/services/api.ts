@@ -2,7 +2,7 @@ import { StudentDashboardData, AdminDashboardData, ActivityLog } from '../types'
 import { EMPTY_STUDENT_DASHBOARD, EMPTY_ADMIN_DASHBOARD } from './mockData';
 
 const getApiBaseUrl = (): string => {
-  const envUrl = (import.meta.env?.VITE_API_BASE_URL as string) || 'http://localhost:8000';
+  const envUrl = (import.meta.env?.VITE_API_BASE_URL as string) || 'https://studiq-backend-2o1r.onrender.com';
   const clean = envUrl.trim().replace(/\/+$/, '');
   return clean.endsWith('/api/v1') ? clean : `${clean}/api/v1`;
 };

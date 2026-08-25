@@ -631,7 +631,25 @@ export const StudentDashboard: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
-          {agentSystemState !== 'MONITORING_ACTIVE' ? (
+          {agentSystemState === 'MONITORING_ACTIVE' ? (
+            <button
+              onClick={handleStopAgent}
+              disabled={isAgentStopping}
+              className="px-5 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 disabled:opacity-50 text-rose-400 text-xs font-bold flex items-center gap-2 transition"
+            >
+              <Square className="w-4 h-4 fill-rose-400" />
+              {isAgentStopping ? 'Stopping...' : 'Stop Monitoring'}
+            </button>
+          ) : agentSystemState === 'RUNNING' ? (
+            <button
+              onClick={handleStartAgent}
+              disabled={isAgentStarting}
+              className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-slate-950 text-xs font-bold flex items-center gap-2 transition shadow-lg shadow-emerald-500/20"
+            >
+              <Play className="w-4 h-4 fill-slate-950" />
+              {isAgentStarting ? 'Starting Agent...' : 'Start Monitoring'}
+            </button>
+          ) : (
             <div className="flex items-center gap-2">
               <button
                 onClick={handleStartAgent}
@@ -652,15 +670,6 @@ export const StudentDashboard: React.FC = () => {
                 {isDownloadingSetup || agentSystemState === 'INSTALLING' ? 'Installing...' : 'Set Up Agent'}
               </button>
             </div>
-          ) : (
-            <button
-              onClick={handleStopAgent}
-              disabled={isAgentStopping}
-              className="px-5 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 disabled:opacity-50 text-rose-400 text-xs font-bold flex items-center gap-2 transition"
-            >
-              <Square className="w-4 h-4 fill-rose-400" />
-              {isAgentStopping ? 'Stopping...' : 'Stop Monitoring'}
-            </button>
           )}
 
           <button

@@ -31,7 +31,8 @@ import {
   X
 } from 'lucide-react';
 
-const API_BASE = 'http://localhost:8000/api/v1';
+import { API_BASE_URL } from '../../services/api';
+import { AgentBridgeService } from '../../services/monitoringService';
 
 interface LiveTelemetryData {
   current_application: string;
@@ -102,7 +103,6 @@ export const LiveMonitoringPage: React.FC = () => {
   const [ignoredWarningCount, setIgnoredWarningCount] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-
   // Timeline Filtering & Search
   const [timelineFilter, setTimelineFilter] = useState<'All' | 'Educational' | 'Productive' | 'Entertainment' | 'Gaming'>('All');
   const [timelineSearch, setTimelineSearch] = useState('');
@@ -110,9 +110,14 @@ export const LiveMonitoringPage: React.FC = () => {
   const fetchTelemetry = async (manual: boolean = false) => {
     if (manual) setIsRefreshing(true);
     try {
-      const res = await fetch(`${API_BASE}/monitoring/current-activity?student_id=1`);
+      // 1. Check local agent bridge or backend agent connection status
+      const bridgeStatus = await AgentBridgeService.checkBridgeStatus();
+      const isBridgeActive = Boolean(bridgeStatus && (bridgeStatus.bridge_status === 'active' || bridgeStatus.agent_running || (bridgeStatus as any).running));
+
+      const res = await fetch(`${API_BASE_URL}/monitoring/current-activity?student_id=1`);
       if (res.ok) {
         const data: LiveTelemetryData = await res.json();
+        data.agent_connected = isBridgeActive || Boolean(data.agent_connected);
         setTelemetry(data);
 
         if (data.entertainment_status?.show_popup) {
@@ -120,6 +125,8 @@ export const LiveMonitoringPage: React.FC = () => {
           setIgnoredWarningCount(data.entertainment_status.ignored_warning_count || 0);
         }
         if (manual) showToast('Live Telemetry Stream Refreshed!', 'success');
+      } else if (isBridgeActive) {
+        setTelemetry(prev => ({ ...prev, agent_connected: true }));
       }
     } catch (e) {
       console.error("Failed to fetch live telemetry:", e);
@@ -138,7 +145,7 @@ export const LiveMonitoringPage: React.FC = () => {
   const handleContinueStudying = async () => {
     setIsWarningOpen(false);
     try {
-      await fetch(`${API_BASE}/monitoring/popup-action`, {
+      await fetch(`${API_BASE_URL}/monitoring/popup-action`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ student_id: 1, action: 'continue_studying' })
@@ -152,7 +159,7 @@ export const LiveMonitoringPage: React.FC = () => {
   const handleIgnoreWarning = async () => {
     setIsWarningOpen(false);
     try {
-      await fetch(`${API_BASE}/monitoring/popup-action`, {
+      await fetch(`${API_BASE_URL}/monitoring/popup-action`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ student_id: 1, action: 'ignore' })
@@ -221,7 +228,7 @@ export const LiveMonitoringPage: React.FC = () => {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/monitoring/telemetry`, {
+      const res = await fetch(`${API_BASE_URL}/monitoring/telemetry`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -236,7 +243,7 @@ export const LiveMonitoringPage: React.FC = () => {
   };
 
   const handleExportCSV = () => {
-    window.open(`${API_BASE}/reports/export/csv/daily`, '_blank');
+    window.open(`${API_BASE_URL}/reports/export/csv/daily`, '_blank');
     showToast('Exporting Daily Monitoring Log CSV...', 'info');
   };
 

@@ -197,7 +197,6 @@ export const invokeAgentProtocol = (action: 'start' | 'stop' | 'status', params:
     window.location.href = uri;
   }
 };
-
 export interface LocalBridgeStatus {
   bridge_status: string;
   agent_running: boolean;
@@ -206,14 +205,27 @@ export interface LocalBridgeStatus {
 
 export class AgentBridgeService {
   public static async checkBridgeStatus(): Promise<LocalBridgeStatus | null> {
+    // 1. Try local loopback HTTP bridge
     try {
-      const res = await fetch(`${LOCAL_BRIDGE_URL}/status`, { signal: AbortSignal.timeout(2000) });
+      const res = await fetch(`${LOCAL_BRIDGE_URL}/status`, { signal: AbortSignal.timeout(1500) });
       if (res.ok) {
         return await res.json();
       }
     } catch (e) {
-      // Bridge unreachable
+      // Local bridge fetch blocked by Mixed Content or unreachable
     }
+
+    // 2. Query backend agent-status fallback (HTTPS cloud hosted environment support)
+    try {
+      const backendRes = await fetch(`${API_BASE_URL}/monitoring/agent-status`, { signal: AbortSignal.timeout(2000) });
+      if (backendRes.ok) {
+        const backendData = await backendRes.json();
+        if (backendData.connected) {
+          return { bridge_status: 'active', agent_running: true };
+        }
+      }
+    } catch (e) {}
+
     return null;
   }
 

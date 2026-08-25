@@ -4,7 +4,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { useToast } from '../../context/ToastContext';
 import { Settings, User, Lock, Bell, Moon, Sun, Clock, Tv, Save } from 'lucide-react';
 
-import { ApiService } from '../../services/api';
+import { ApiService, API_BASE_URL } from '../../services/api';
 
 export const StudentSettingsPage: React.FC = () => {
   const { user } = useAuth();
@@ -58,7 +58,7 @@ export const StudentSettingsPage: React.FC = () => {
       return;
     }
     try {
-      const res = await fetch('http://localhost:8000/api/v1/auth/change-password', {
+      const res = await fetch(`${API_BASE_URL}/auth/change-password`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

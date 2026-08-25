@@ -21,6 +21,9 @@ import {
   Moon
 } from 'lucide-react';
 
+import { API_BASE_URL } from '../services/api';
+import { AgentBridgeService } from '../services/monitoringService';
+
 export const LandingPage: React.FC = () => {
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
@@ -30,7 +33,12 @@ export const LandingPage: React.FC = () => {
   React.useEffect(() => {
     const checkEngine = async () => {
       try {
-        const res = await fetch('http://localhost:8000/api/v1/monitoring/current-activity?student_id=1');
+        const bridgeStatus = await AgentBridgeService.checkBridgeStatus();
+        if (bridgeStatus) {
+          setEngineOnline(true);
+          return;
+        }
+        const res = await fetch(`${API_BASE_URL}/monitoring/current-activity?student_id=1`);
         if (res.ok) {
           const data = await res.json();
           setEngineOnline(data.agent_connected ?? true);

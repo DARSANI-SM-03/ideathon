@@ -1,7 +1,7 @@
 import { StudentDashboardData, ActivityLog } from '../types';
 import { EMPTY_STUDENT_DASHBOARD } from './mockData';
 
-const API_BASE_URL = 'http://localhost:8000/api/v1';
+import { API_BASE_URL } from './api';
 
 export class StudentService {
   private static getHeaders() {

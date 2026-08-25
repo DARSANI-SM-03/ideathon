@@ -3,6 +3,8 @@ import { Settings, Shield, Sliders, Bell, Moon, Sun, Save } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
 import { useToast } from '../../context/ToastContext';
 
+import { API_BASE_URL } from '../../services/api';
+
 export const AdminSettingsPage: React.FC = () => {
   const { theme, toggleTheme } = useTheme();
   const { showToast } = useToast();
@@ -14,7 +16,7 @@ export const AdminSettingsPage: React.FC = () => {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await fetch('http://localhost:8000/api/v1/admin/settings', {
+      await fetch(`${API_BASE_URL}/admin/settings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
