@@ -52,6 +52,7 @@ def test_onboarding_workflow():
         db.commit()
 
     student.status = "Pending Approval"
+    student.status = "Pending Approval"
     student.monitoring_authorized = False
     student.onboarding_completed = False
     db.commit()

@@ -1,5 +1,17 @@
 import time
 import sys
+import os
+
+class NullWriter:
+    def write(self, s):
+        pass
+    def flush(self):
+        pass
+
+if sys.stdout is None:
+    sys.stdout = NullWriter()
+if sys.stderr is None:
+    sys.stderr = NullWriter()
 import threading
 from config import AgentConfig
 from collector import SystemActivityCollector
@@ -87,13 +99,49 @@ def spawn_healthy_usage_popup(sender: TelemetrySender, student_id: int):
         active_popup_thread = threading.Thread(target=_popup_window, daemon=True)
         active_popup_thread.start()
 
+def get_script_dir() -> str:
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+def log_debug(msg: str):
+    try:
+        log_file = os.path.join(get_script_dir(), "agent_debug.log")
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Agent] {msg}\n")
+    except Exception:
+        pass
+
 def main():
+    log_debug("agent.py main() started.")
+    import argparse
+    parser = argparse.ArgumentParser(description="StudIQ Windows Desktop Monitoring Agent")
+    parser.add_argument("--backend-url", type=str, default="", help="FastAPI Backend URL")
+    parser.add_argument("--token", type=str, default="", help="Agent telemetry session token")
+    parser.add_argument("--student-id", type=int, default=0, help="Student ID")
+    parser.add_argument("--student-code", type=str, default="", help="Student Code (e.g. STU-2026-001)")
+    args, _ = parser.parse_known_args()
+
+    if args.backend_url:
+        os.environ["STUDIQ_BACKEND_URL"] = args.backend_url
+    if args.token:
+        os.environ["STUDIQ_AGENT_TOKEN"] = args.token
+    if args.student_id:
+        os.environ["STUDIQ_STUDENT_ID"] = str(args.student_id)
+    if args.student_code:
+        os.environ["STUDIQ_STUDENT_CODE"] = args.student_code
+
+    student_id = int(os.getenv("STUDIQ_STUDENT_ID", str(AgentConfig.STUDENT_ID)))
+    student_code = os.getenv("STUDIQ_STUDENT_CODE", AgentConfig.STUDENT_CODE)
+
+    log_debug(f"agent.py initialized: student_id={student_id}, student_code={student_code}, backend_url={os.getenv('STUDIQ_BACKEND_URL', AgentConfig.BACKEND_URL)}")
+
     print("==========================================================")
     print("   STUDIQ WINDOWS DESKTOP MONITORING AGENT v1.0")
     print("   AI Digital Behaviour Intelligence Daemon")
     print("==========================================================")
     print(f"Target Backend API : {AgentConfig.BACKEND_URL}")
-    print(f"Student ID         : {AgentConfig.STUDENT_CODE} (ID: {AgentConfig.STUDENT_ID})")
+    print(f"Student Identifier : {student_code} (ID: {student_id})")
     print(f"Sampling Frequency : Every {AgentConfig.POLL_INTERVAL_SECONDS} seconds")
     print("Privacy Guarantee  : Zero access to Gallery, Passwords, Bank Apps, Files, Messages")
     print("----------------------------------------------------------\n")
@@ -102,6 +150,18 @@ def main():
     classifier = ActivityClassifier()
     sender = TelemetrySender()
 
+    # Background Heartbeat Thread
+    def _heartbeat_loop():
+        while True:
+            try:
+                sender.send_heartbeat(student_id=student_id, student_code=student_code)
+            except Exception:
+                pass
+            time.sleep(10)
+
+    hb_thread = threading.Thread(target=_heartbeat_loop, daemon=True)
+    hb_thread.start()
+    print("[Agent Heartbeat] Background 10s heartbeat thread active.")
     print("[Agent Loop Started] Monitoring active foreground windows...\n")
 
     try:
@@ -123,8 +183,8 @@ def main():
             print(f"  3. Classifier Result: Category='{category}' | Confidence={confidence:.2f}")
 
             payload = {
-                "student_id": AgentConfig.STUDENT_ID,
-                "student_code": AgentConfig.STUDENT_CODE,
+                "student_id": student_id,
+                "student_code": student_code,
                 "application_name": app_name,
                 "window_title": window_title,
                 "website_url": website_url,
@@ -144,7 +204,7 @@ def main():
 
             if res_dict.get("show_popup"):
                 print("  ⚠️ [HEALTHY DIGITAL USAGE ALERT] 15 continuous minutes of Entertainment detected! Triggering popup...")
-                spawn_healthy_usage_popup(sender, AgentConfig.STUDENT_ID)
+                spawn_healthy_usage_popup(sender, student_id)
 
             print("----------------------------------------------------------\n")
             time.sleep(AgentConfig.POLL_INTERVAL_SECONDS)

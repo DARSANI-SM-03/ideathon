@@ -1,7 +1,7 @@
 import os
 
 def resolve_backend_url() -> str:
-    raw_url = os.getenv("STUDIQ_BACKEND_URL", "http://localhost:8000")
+    raw_url = os.getenv("STUDIQ_BACKEND_URL", "https://studiq-backend-2o1r.onrender.com")
     clean = raw_url.strip().rstrip("/")
     if clean.endswith("/api/v1/monitoring/update"):
         return clean

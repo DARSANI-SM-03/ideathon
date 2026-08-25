@@ -14,11 +14,49 @@ from app.ai.replay_engine import replay_engine
 from app.ai.recommendation_engine import recommendation_engine
 from app.models.monitoring import ParentWhitelist, StudyModeConfig, WarningLog, AITimelineEvent, ActivityLog, ParentAlert, MentorAlert
 
+from app.auth.security import create_agent_token, decode_agent_token
+from app.auth.dependencies import get_current_user
+
 router = APIRouter(prefix="/monitoring", tags=["Monitoring & Explainable AI"])
 
 # Global state to track last desktop agent ping
 last_agent_ping_time: Optional[float] = None
 last_telemetry_payload: Optional[Dict[str, Any]] = None
+
+@router.post("/agent/session")
+def create_agent_session(current_user: dict = Depends(get_current_user)):
+    """
+    Generates a short-lived, scoped agent token for the logged in student.
+    """
+    student_id = current_user.get("id", 1)
+    student_code = current_user.get("user_identifier", "STU-2026-001")
+    token = create_agent_token({"student_id": student_id, "student_code": student_code, "scope": "telemetry"})
+    return {
+        "status": "success",
+        "agent_token": token,
+        "student_id": student_id,
+        "student_code": student_code,
+        "expires_in_hours": 24
+    }
+
+@router.post("/heartbeat")
+def receive_agent_heartbeat(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+    """
+    Receives periodic heartbeat pings from the StudIQ Windows Desktop Agent / Bridge.
+    """
+    global last_agent_ping_time
+    import time
+    last_agent_ping_time = time.time()
+    student_id = payload.get("student_id", 1)
+    agent_version = payload.get("agent_version", "1.0.0")
+
+    return {
+        "status": "active",
+        "student_id": student_id,
+        "agent_version": agent_version,
+        "server_time": time.time(),
+        "message": "Heartbeat received successfully."
+    }
 
 @router.post("/update")
 @router.post("/telemetry")
@@ -97,20 +135,25 @@ def update_telemetry_from_agent(payload: Dict[str, Any] = Body(...), db: Session
         "ignored_warning_count": ent_res["ignored_warning_count"]
     }
 
+@router.get("/status")
 @router.get("/agent-status")
-def get_desktop_agent_status(db: Session = Depends(get_db)):
+def get_desktop_agent_status(student_id: int = 1, db: Session = Depends(get_db)):
     import time
     global last_agent_ping_time, last_telemetry_payload
     is_connected = False
-    if last_agent_ping_time and (time.time() - last_agent_ping_time) < 15.0:
-        is_connected = True
+    ping_delta = None
+    if last_agent_ping_time:
+        ping_delta = round(time.time() - last_agent_ping_time, 1)
+        if ping_delta < 30.0:
+            is_connected = True
 
-    ent_status = warning_engine.get_entertainment_status(db, 1)
+    ent_status = warning_engine.get_entertainment_status(db, student_id)
 
     return {
         "connected": is_connected,
-        "status_label": "🟢 Desktop Agent Connected" if is_connected else "🔴 Desktop Agent Offline",
-        "last_ping_seconds_ago": round(time.time() - last_agent_ping_time, 1) if last_agent_ping_time else None,
+        "status": "Active" if is_connected else "Inactive",
+        "status_label": "🟢 Monitoring Active" if is_connected else "🔴 Monitoring Inactive",
+        "last_ping_seconds_ago": ping_delta,
         "current_telemetry": last_telemetry_payload,
         "entertainment_status": ent_status
     }

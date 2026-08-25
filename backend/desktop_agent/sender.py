@@ -4,8 +4,12 @@ from urllib3.util.retry import Retry
 from typing import Dict, Any, Tuple, List
 from config import AgentConfig
 
+import os
+
 class TelemetrySender:
-    def __init__(self, backend_url: str = AgentConfig.BACKEND_URL):
+    def __init__(self, backend_url: str = ""):
+        if not backend_url:
+            backend_url = os.getenv("STUDIQ_BACKEND_URL", AgentConfig.BACKEND_URL)
         self.backend_url = backend_url
         self.session = requests.Session()
         self.offline_queue: List[Dict[str, Any]] = []
@@ -68,6 +72,25 @@ class TelemetrySender:
         try:
             url = self.backend_url.replace("/monitoring/telemetry", "/monitoring/popup-action").replace("/monitoring/update", "/monitoring/popup-action")
             res = self.session.post(url, json={"student_id": student_id, "action": action}, timeout=5.0)
+            return res.status_code == 200
+        except Exception:
+            return False
+
+    def send_heartbeat(self, student_id: int, student_code: str) -> bool:
+        """Sends lightweight heartbeat to backend."""
+        try:
+            from datetime import datetime
+            url = AgentConfig.HEARTBEAT_URL
+            res = self.session.post(
+                url,
+                json={
+                    "student_id": student_id,
+                    "student_code": student_code,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "agent_version": "1.0.0"
+                },
+                timeout=3.0
+            )
             return res.status_code == 200
         except Exception:
             return False

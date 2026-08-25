@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ApiService, API_BASE_URL } from '../../services/api';
+import { AgentBridgeService, invokeAgentProtocol } from '../../services/monitoringService';
 import { StudentDashboardData } from '../../types';
 import { CircularProgress } from '../../components/ui/CircularProgress';
 import { StudentOnboardingWizard } from '../../components/onboarding/StudentOnboardingWizard';
@@ -29,7 +30,13 @@ import {
   Radio,
   ArrowRight,
   ShieldCheck,
-  Brain
+  Brain,
+  Play,
+  Square,
+  Download,
+  CheckCircle2,
+  X,
+  HelpCircle
 } from 'lucide-react';
 
 interface EntertainmentStatus {
@@ -95,6 +102,105 @@ export const StudentDashboard: React.FC = () => {
   const [isBurnoutModalOpen, setIsBurnoutModalOpen] = useState(false);
   const [focusBreakdown, setFocusBreakdown] = useState<any>(null);
   const [burnoutBreakdown, setBurnoutBreakdown] = useState<any>(null);
+
+  // Local Agent Bridge Launcher state
+  const [showBridgeModal, setShowBridgeModal] = useState(false);
+  const [isAgentStarting, setIsAgentStarting] = useState(false);
+  const [isAgentStopping, setIsAgentStopping] = useState(false);
+  const [agentActionMessage, setAgentActionMessage] = useState<string | null>(null);
+
+  const handleStartAgent = async () => {
+    setIsAgentStarting(true);
+    setAgentActionMessage(null);
+
+    // 1. Fetch scoped agent token from backend
+    let agentToken = '';
+    let studentId = user?.id || 1;
+    let studentCode = user?.user_identifier || 'STU-2026-001';
+
+    try {
+      const tokenRes = await fetch(`${API_BASE_URL}/monitoring/agent/session`, {
+        method: 'POST',
+        headers: ApiService.getHeaders()
+      });
+      if (tokenRes.ok) {
+        const tokenData = await tokenRes.json();
+        agentToken = tokenData.agent_token || '';
+        studentId = tokenData.student_id || studentId;
+        studentCode = tokenData.student_code || studentCode;
+      }
+    } catch (e) {
+      console.warn('Error fetching agent session token:', e);
+    }
+
+    // 2. Check if local bridge is ALREADY active on 127.0.0.1:8765
+    let bridgeStatus = await AgentBridgeService.checkBridgeStatus();
+    if (bridgeStatus && bridgeStatus.agent_running) {
+      setAgentActionMessage('🟢 Desktop agent is active and running.');
+      setAgentConnected(true);
+      setIsAgentStarting(false);
+      return;
+    }
+
+    // 3. Trigger studiq-agent://start protocol launch
+    setAgentActionMessage('🚀 Launching StudIQ Windows Agent via studiq-agent:// protocol...');
+    invokeAgentProtocol('start', {
+      token: agentToken,
+      backend_url: API_BASE_URL,
+      student_id: String(studentId),
+      student_code: studentCode
+    });
+
+    // Also attempt local bridge start if bridge is up
+    if (bridgeStatus) {
+      await AgentBridgeService.startAgent(agentToken, API_BASE_URL, studentId, studentCode);
+    }
+
+    // 4. Poll backend heartbeat for up to 15 seconds to confirm agent is actively sending data
+    let heartbeatConfirmed = false;
+    for (let i = 0; i < 8; i++) {
+      await new Promise(r => setTimeout(r, 1500));
+      try {
+        const statusRes = await fetch(`${API_BASE_URL}/monitoring/agent-status?student_id=${studentId}`);
+        if (statusRes.ok) {
+          const statusData = await statusRes.json();
+          if (statusData.connected) {
+            heartbeatConfirmed = true;
+            break;
+          }
+        }
+      } catch (e) {
+        // Retry poll
+      }
+    }
+
+    if (heartbeatConfirmed) {
+      setAgentActionMessage('🟢 Windows Agent launched & Backend Heartbeat confirmed!');
+      setAgentConnected(true);
+    } else {
+      setAgentActionMessage('🔴 Agent launch triggered, but heartbeat not confirmed. Install agent if not present.');
+      setAgentConnected(false);
+      setShowBridgeModal(true);
+    }
+    setIsAgentStarting(false);
+  };
+
+  const handleStopAgent = async () => {
+    setIsAgentStopping(true);
+    setAgentActionMessage(null);
+    try {
+      // 1. Dispatch protocol stop and HTTP bridge stop
+      invokeAgentProtocol('stop');
+      await AgentBridgeService.stopAgent();
+      
+      setAgentActionMessage('🔴 Monitoring Agent stopped.');
+      setAgentConnected(false);
+    } catch (err) {
+      console.error('Error stopping desktop agent:', err);
+    } finally {
+      setIsAgentStopping(false);
+    }
+  };
 
 
   // Entertainment duration tracking & popup state
@@ -291,6 +397,68 @@ export const StudentDashboard: React.FC = () => {
         </div>
       )}
 
+      {/* LOCAL BRIDGE INSTALL / SETUP GUIDE MODAL */}
+      {showBridgeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-brand-500/40 rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-brand-500/10 border border-brand-500/30 flex items-center justify-center text-brand-400">
+                  <Laptop className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">StudIQ Desktop Agent Setup</h3>
+                  <span className="text-xs font-mono text-slate-400">Local Agent Bridge Not Detected</span>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowBridgeModal(false)}
+                className="text-slate-400 hover:text-white transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-4 space-y-3">
+              <p className="text-xs text-slate-300 leading-relaxed font-medium">
+                StudIQ Desktop Agent runs locally on your Windows device to track active study process window titles.
+              </p>
+              
+              <div className="space-y-2 text-xs text-slate-400">
+                <div className="font-bold text-slate-200">1-Time Windows Setup (No Command Prompt Required):</div>
+                <ol className="list-decimal list-inside space-y-1.5 font-mono text-[11px] text-slate-300">
+                  <li>Run <span className="text-brand-400 font-bold">install_studiq_agent.bat</span> inside <span className="text-slate-400">backend/desktop_agent/installer</span>.</li>
+                  <li>This registers the <span className="text-emerald-400 font-bold">studiq-agent://</span> custom URI scheme in Windows Registry.</li>
+                  <li>Click <span className="text-emerald-400 font-bold">Start Monitoring Agent</span> on the web dashboard — Windows launches the agent automatically!</li>
+                </ol>
+              </div>
+
+              <div className="bg-brand-500/10 border border-brand-500/20 rounded-lg p-2.5 flex items-start gap-2">
+                <ShieldCheck className="w-4 h-4 text-brand-400 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-brand-300 leading-tight">
+                  <strong className="font-semibold text-white">Privacy Guarantee:</strong> Zero access to passwords, banking applications, gallery photos, private files, or clipboard data.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-1">
+              <button
+                onClick={handleStartAgent}
+                className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 text-xs font-bold transition shadow-lg shadow-emerald-500/20 flex items-center gap-2"
+              >
+                <CheckCircle2 className="w-4 h-4" /> Check & Connect Again
+              </button>
+              <button
+                onClick={() => setShowBridgeModal(false)}
+                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold border border-slate-700 transition"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Welcome Header */}
       <div className="glass-card rounded-2xl p-6 border border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
@@ -320,6 +488,69 @@ export const StudentDashboard: React.FC = () => {
             className="px-4 py-2.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-xs font-bold flex items-center gap-2 transition"
           >
             <Radio className="w-4 h-4 animate-pulse" /> Live Telemetry Dashboard →
+          </button>
+        </div>
+      </div>
+
+      {/* STUDY MONITORING CONTROL CARD */}
+      <div className="glass-card rounded-2xl p-5 border border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="flex items-start gap-3.5">
+          <div className={`w-11 h-11 rounded-xl flex items-center justify-center font-bold shrink-0 border ${
+            agentConnected
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+              : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+          }`}>
+            <Activity className="w-6 h-6" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-black text-white">Study Monitoring Agent</h2>
+              <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold border ${
+                agentConnected
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                  : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+              }`}>
+                {agentConnected ? '🟢 Monitoring Active' : '🔴 Monitoring Inactive'}
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-1 max-w-2xl leading-relaxed">
+              StudIQ's desktop agent monitors active study process window titles on this Windows device to compute Focus Scores and Burnout Risk.
+            </p>
+            {agentActionMessage && (
+              <div className="mt-2 text-xs font-mono text-emerald-400 animate-in fade-in duration-150">
+                {agentActionMessage}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 shrink-0">
+          {!agentConnected ? (
+            <button
+              onClick={handleStartAgent}
+              disabled={isAgentStarting}
+              className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-slate-950 text-xs font-bold flex items-center gap-2 transition shadow-lg shadow-emerald-500/20"
+            >
+              <Play className="w-4 h-4 fill-slate-950" />
+              {isAgentStarting ? 'Starting Agent...' : 'Start Monitoring Agent'}
+            </button>
+          ) : (
+            <button
+              onClick={handleStopAgent}
+              disabled={isAgentStopping}
+              className="px-5 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 disabled:opacity-50 text-rose-400 text-xs font-bold flex items-center gap-2 transition"
+            >
+              <Square className="w-4 h-4 fill-rose-400" />
+              {isAgentStopping ? 'Stopping...' : 'Stop Agent'}
+            </button>
+          )}
+
+          <button
+            onClick={() => setShowBridgeModal(true)}
+            className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700 transition"
+            title="Desktop Agent Setup Help"
+          >
+            <HelpCircle className="w-4 h-4" />
           </button>
         </div>
       </div>

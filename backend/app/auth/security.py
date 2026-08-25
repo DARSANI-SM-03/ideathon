@@ -66,3 +66,19 @@ def verify_password_reset_token(token: str) -> Optional[str]:
     except jwt.PyJWTError:
         return None
 
+def create_agent_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(hours=24))
+    to_encode.update({"exp": expire, "token_type": "agent_session"})
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+def decode_agent_token(token: str) -> Optional[dict]:
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        if payload.get("token_type") != "agent_session":
+            return None
+        return payload
+    except jwt.PyJWTError:
+        return None
+
+

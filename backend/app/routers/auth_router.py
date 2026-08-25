@@ -138,69 +138,77 @@ def register_mentor(req: MentorRegisterRequest, db: Session = Depends(get_db)):
 
 @router.post("/login")
 def login(request: LoginRequest, db: Session = Depends(get_db)):
-    user_id = 1
-    name = "User"
     role = request.role.lower()
+    user_id = None
+    name = None
+    email = None
+    user_identifier = request.user_identifier.strip()
 
     if role == "student":
         student = db.query(Student).filter(
-            (Student.student_id == request.user_identifier) | (Student.email == request.user_identifier)
+            (Student.student_id == user_identifier) | (Student.email == user_identifier)
         ).first()
-        if student:
-            if student.status in ["Rejected", "Blocked"]:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Registration rejected by Parent or Admin."
-                )
-            if verify_password(request.password, student.password_hash):
-                user_id = student.id
-                name = student.full_name or student.name
-            else:
-                raise HTTPException(status_code=401, detail="Invalid password for student account.")
-        else:
-            name = "Alex Mercer"
+        if not student:
+            raise HTTPException(status_code=401, detail="No student account found for this ID or email.")
+        if student.status in ["Rejected", "Blocked"]:
+            raise HTTPException(status_code=403, detail="Registration rejected by Parent or Admin.")
+        if not verify_password(request.password, student.password_hash):
+            raise HTTPException(status_code=401, detail="Invalid password for student account.")
+        
+        user_id = student.id
+        name = student.full_name or student.name
+        email = student.email
+        user_identifier = student.student_id or student.email
 
     elif role == "admin":
         admin = db.query(Admin).filter(
-            (Admin.username == request.user_identifier) | (Admin.email == request.user_identifier)
+            (Admin.username == user_identifier) | (Admin.email == user_identifier)
         ).first()
-        if admin:
-            if verify_password(request.password, admin.password_hash):
-                user_id = admin.id
-                name = admin.full_name or admin.name
-            else:
-                raise HTTPException(status_code=401, detail="Invalid password for admin account.")
-        else:
-            name = "System Admin"
+        if not admin:
+            raise HTTPException(status_code=401, detail="No admin account found for this username or email.")
+        if not verify_password(request.password, admin.password_hash):
+            raise HTTPException(status_code=401, detail="Invalid password for admin account.")
+        
+        user_id = admin.id
+        name = admin.full_name or admin.name
+        email = admin.email
+        user_identifier = admin.username or admin.email
+
     elif role == "mentor":
         mentor = db.query(Mentor).filter(
-            (Mentor.employee_id == request.user_identifier) | (Mentor.email == request.user_identifier)
+            (Mentor.employee_id == user_identifier) | (Mentor.email == user_identifier)
         ).first()
-        if mentor:
-            if verify_password(request.password, mentor.password_hash):
-                user_id = mentor.id
-                name = mentor.full_name or mentor.name
-            else:
-                raise HTTPException(status_code=401, detail="Invalid password for mentor account.")
-        else:
-            name = "Dr. Robert Vance"
-    elif role == "parent":
-        parent = db.query(Parent).filter(Parent.email == request.user_identifier).first()
-        if parent:
-            if verify_password(request.password, parent.password_hash):
-                user_id = parent.id
-                name = parent.full_name or parent.name
-            else:
-                raise HTTPException(status_code=401, detail="Invalid password for parent account.")
-        else:
-            name = "Eleanor Mercer"
+        if not mentor:
+            raise HTTPException(status_code=401, detail="No mentor account found for this Employee ID or email.")
+        if not verify_password(request.password, mentor.password_hash):
+            raise HTTPException(status_code=401, detail="Invalid password for mentor account.")
+        
+        user_id = mentor.id
+        name = mentor.full_name or mentor.name
+        email = mentor.email
+        user_identifier = mentor.employee_id or mentor.email
 
+    elif role == "parent":
+        parent = db.query(Parent).filter(Parent.email == user_identifier).first()
+        if not parent:
+            raise HTTPException(status_code=401, detail="No parent account found for this email address.")
+        if not verify_password(request.password, parent.password_hash):
+            raise HTTPException(status_code=401, detail="Invalid password for parent account.")
+        
+        user_id = parent.id
+        name = parent.full_name or parent.name
+        email = parent.email
+        user_identifier = parent.parent_id or parent.email
+
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported role '{role}'")
 
     payload_data = {
-        "sub": request.user_identifier,
+        "sub": user_identifier,
         "role": role,
         "user_id": user_id,
-        "name": name
+        "name": name,
+        "email": email
     }
 
     access_token = create_access_token(data=payload_data)
@@ -212,8 +220,9 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
         "token_type": "bearer",
         "role": role,
         "user_id": user_id,
-        "user_identifier": request.user_identifier,
-        "name": name
+        "user_identifier": user_identifier,
+        "name": name,
+        "email": email
     }
 
 @router.post("/refresh")
@@ -230,7 +239,8 @@ def refresh_token(payload: Dict[str, str] = Body(...)):
         "sub": decoded.get("sub"),
         "role": decoded.get("role"),
         "user_id": decoded.get("user_id"),
-        "name": decoded.get("name")
+        "name": decoded.get("name"),
+        "email": decoded.get("email")
     })
 
     return {
@@ -278,7 +288,7 @@ def reset_password(payload: Dict[str, str] = Body(...), db: Session = Depends(ge
 def change_password(payload: Dict[str, str] = Body(...), current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     old_pw = payload.get("old_password")
     new_pw = payload.get("new_password")
-    user_id = current_user.get("user_id", 1)
+    user_id = current_user.get("user_id")
 
     student = db.query(Student).filter(Student.id == user_id).first()
     if student:
@@ -290,13 +300,13 @@ def change_password(payload: Dict[str, str] = Body(...), current_user: dict = De
     return {"status": "success", "message": "Password changed successfully."}
 
 @router.get("/me", response_model=UserProfile)
-def get_me(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_me(current_user: dict = Depends(get_current_user)):
     return UserProfile(
-        id=current_user.get("user_id", 1),
-        user_identifier=current_user.get("sub", "STU-2026-001"),
-        name=current_user.get("name", "Alex Mercer"),
-        email=f"{current_user.get('sub', 'user')}@studiq.edu",
-        role=current_user.get("role", "student"),
-        department="Computer Science"
+        id=current_user["id"],
+        user_identifier=current_user["user_identifier"],
+        name=current_user["name"],
+        email=current_user["email"],
+        role=current_user["role"],
+        department=current_user.get("department", "General")
     )
 

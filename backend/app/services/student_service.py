@@ -9,8 +9,11 @@ from datetime import datetime, timedelta
 
 class StudentService:
     def get_student_dashboard(self, db: Session, student_id_or_num) -> dict:
-        if isinstance(student_id_or_num, int):
-            student = db.query(Student).filter(Student.id == student_id_or_num).first()
+        if isinstance(student_id_or_num, int) or (isinstance(student_id_or_num, str) and student_id_or_num.isdigit()):
+            sid_num = int(student_id_or_num)
+            student = db.query(Student).filter(
+                (Student.id == sid_num) | (Student.student_id == str(student_id_or_num)) | (Student.email == str(student_id_or_num))
+            ).first()
         else:
             student = db.query(Student).filter(
                 (Student.student_id == student_id_or_num) | (Student.email == student_id_or_num)

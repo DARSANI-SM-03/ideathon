@@ -44,7 +44,7 @@ export const LoginPage: React.FC = () => {
 
   // Sign in states
   const [identifier, setIdentifier] = useState('');
-  const [password, setPassword] = useState('password123');
+  const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
   const [forgotModalOpen, setForgotModalOpen] = useState(false);
@@ -53,19 +53,19 @@ export const LoginPage: React.FC = () => {
 
   // Registration form states
   const [fullName, setFullName] = useState('');
-  const [studentId, setStudentId] = useState('STU-2026-009');
-  const [employeeId, setEmployeeId] = useState('EMP-2026-005');
+  const [studentId, setStudentId] = useState('');
+  const [employeeId, setEmployeeId] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [collegeName, setCollegeName] = useState('Global Institute of Technology');
   const [department, setDepartment] = useState('Computer Science');
   const [semester, setSemester] = useState<number>(1);
   const [year, setYear] = useState<number>(1);
   const [institutionType, setInstitutionType] = useState('college');
-  const [phone, setPhone] = useState('+1 555-019-2834');
+  const [phone, setPhone] = useState('');
   const [parentName, setParentName] = useState('');
-  const [parentEmail, setParentEmail] = useState('parent.mercer@gmail.com');
-  const [parentPhone, setParentPhone] = useState('+1 555-019-2834');
-  const [confirmPassword, setConfirmPassword] = useState('password123');
+  const [parentEmail, setParentEmail] = useState('');
+  const [parentPhone, setParentPhone] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
   const handleRoleChange = (newRole: UserRole) => {
     setRole(newRole);
@@ -80,29 +80,9 @@ export const LoginPage: React.FC = () => {
     }
   }, [queryRole]);
 
-  // Set default identifier per role for Sign In
   useEffect(() => {
     setErrorMsg('');
     setSuccessMsg('');
-    if (role === 'student') {
-      setIdentifier('STU-2026-001');
-      setRegEmail('alex.mercer@studiq.edu');
-      setFullName('Alex Mercer');
-    } else if (role === 'parent') {
-      setIdentifier('parent.mercer@gmail.com');
-      setRegEmail('parent.mercer@gmail.com');
-      setFullName('Eleanor Mercer');
-    } else if (role === 'mentor') {
-      setIdentifier('EMP-2026-001');
-      setRegEmail('vance@studiq.edu');
-      setFullName('Dr. Robert Vance');
-    } else if (role === 'admin') {
-      setIdentifier('admin');
-      setRegEmail('admin@studiq.edu');
-      setFullName('Dr. Arthur Pendelton');
-    }
-    setPassword('password123');
-    setConfirmPassword('password123');
   }, [role, mode]);
 
   const getRedirectPath = (r: UserRole) => {

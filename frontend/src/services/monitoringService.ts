@@ -175,3 +175,78 @@ export class MonitoringService {
     this.status = s;
   }
 }
+
+export const LOCAL_BRIDGE_URL = 'http://127.0.0.1:8765';
+
+export const invokeAgentProtocol = (action: 'start' | 'stop' | 'status', params: Record<string, string> = {}) => {
+  const query = new URLSearchParams(params).toString();
+  const uri = `studiq-agent://${action}${query ? '?' + query : ''}`;
+  
+  try {
+    let iframe = document.getElementById('studiq-protocol-iframe') as HTMLIFrameElement;
+    if (!iframe) {
+      iframe = document.createElement('iframe');
+      iframe.id = 'studiq-protocol-iframe';
+      iframe.style.display = 'none';
+      document.body.appendChild(iframe);
+    }
+    iframe.src = uri;
+  } catch (e) {
+    window.location.href = uri;
+  }
+};
+
+export interface LocalBridgeStatus {
+  bridge_status: string;
+  agent_running: boolean;
+  agent_pid?: number | null;
+}
+
+export class AgentBridgeService {
+  public static async checkBridgeStatus(): Promise<LocalBridgeStatus | null> {
+    try {
+      const res = await fetch(`${LOCAL_BRIDGE_URL}/status`, { signal: AbortSignal.timeout(2000) });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      // Bridge unreachable
+    }
+    return null;
+  }
+
+  public static async startAgent(token: string, backendUrl: string, studentId: number, studentCode: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${LOCAL_BRIDGE_URL}/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, backend_url: backendUrl, student_id: studentId, student_code: studentCode }),
+        signal: AbortSignal.timeout(4000)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return data.status === 'started' || data.status === 'already_running';
+      }
+    } catch (e) {
+      console.warn('Unable to connect to local agent bridge on 127.0.0.1:8765', e);
+    }
+    return false;
+  }
+
+  public static async stopAgent(): Promise<boolean> {
+    try {
+      const res = await fetch(`${LOCAL_BRIDGE_URL}/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(4000)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return data.status === 'stopped';
+      }
+    } catch (e) {
+      console.warn('Unable to connect to local agent bridge on 127.0.0.1:8765', e);
+    }
+    return false;
+  }
+}
