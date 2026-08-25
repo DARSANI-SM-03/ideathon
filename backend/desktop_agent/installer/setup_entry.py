@@ -1,14 +1,15 @@
 """
-StudIQ Windows Desktop Agent Installer Entrypoint
-==================================================
+StudIQ Windows Desktop Agent Installer Entrypoint (v1.3)
+==========================================================
 Standalone Windows setup installer compiled with PyInstaller into StudIQAgentSetup.exe.
-1. Uses drive_selector to dynamically determine optimal installation drive (zero hardcoded paths).
+1. Uses drive_selector to dynamically determine per-user LocalAppData path (%LOCALAPPDATA%\StudIQ\Agent).
 2. Performs graceful process shutdown and file handle release polling (prevents WinError 32).
-3. Extracts bundled StudIQAgent.zip payload directly to target drive (prevents C: Error 112).
+3. Extracts bundled StudIQAgent.zip payload directly to installation directory.
 4. Registers studiq-agent:// protocol handler in HKCU.
 5. Configures HKCU Run key for automatic Windows startup.
 6. Creates Start Menu and Desktop shortcuts.
 7. Generates uninstaller and launches agent daemon.
+8. Native Windows GUI dialog (Tkinter) feedback, zero console windows.
 """
 
 import sys
@@ -18,11 +19,13 @@ import winreg
 import subprocess
 import time
 import zipfile
+import tempfile
 import urllib.request
 import urllib.parse
 from drive_selector import select_optimal_installation_path, REQUIRED_FREE_SPACE_BYTES
 
 LOCAL_BRIDGE_URL = "http://127.0.0.1:8765"
+is_silent_mode = False
 
 def get_base_dir() -> str:
     if getattr(sys, 'frozen', False):
@@ -30,17 +33,33 @@ def get_base_dir() -> str:
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def log_setup(msg: str):
+    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+    log_line = f"[{timestamp}] [Setup v1.3] {msg}\n"
+    
+    # 1. Write to %TEMP%\StudIQAgentSetup.log
+    try:
+        temp_log = os.path.join(tempfile.gettempdir(), "StudIQAgentSetup.log")
+        with open(temp_log, "a", encoding="utf-8") as f:
+            f.write(log_line)
+    except Exception:
+        pass
+
+    # 2. Write to %LOCALAPPDATA%\StudIQ\installer_setup.log
     try:
         appdata = os.getenv("LOCALAPPDATA", os.path.expanduser("~"))
         log_dir = os.path.join(appdata, "StudIQ")
         os.makedirs(log_dir, exist_ok=True)
         log_file = os.path.join(log_dir, "installer_setup.log")
         with open(log_file, "a", encoding="utf-8") as f:
-            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+            f.write(log_line)
     except Exception:
         pass
 
 def show_dialog(title: str, message: str, is_error: bool = False):
+    global is_silent_mode
+    if is_silent_mode:
+        log_setup(f"[Silent Dialog] {title}: {message}")
+        return
     try:
         import tkinter as tk
         from tkinter import messagebox
@@ -52,20 +71,20 @@ def show_dialog(title: str, message: str, is_error: bool = False):
         else:
             messagebox.showinfo(title, message)
         root.destroy()
-    except Exception:
-        pass
+    except Exception as e:
+        log_setup(f"GUI Dialog fallback note: {e}")
 
 def gracefully_stop_running_agent():
     log_setup("Detecting running StudIQAgent / bridge instances...")
     # 1. Try HTTP /stop request to bridge daemon
     try:
         req = urllib.request.Request(f"{LOCAL_BRIDGE_URL}/stop", method="POST", data=b"{}")
-        with urllib.request.urlopen(req, timeout=2.0) as resp:
+        with urllib.request.urlopen(req, timeout=0.5) as resp:
             log_setup("[Shutdown] HTTP /stop sent successfully.")
     except Exception as e:
         log_setup(f"[Shutdown] HTTP /stop note: {e}")
 
-    time.sleep(1.0)
+    time.sleep(0.3)
 
     # 2. Terminate StudIQAgent.exe processes if still running
     try:
@@ -73,7 +92,7 @@ def gracefully_stop_running_agent():
     except Exception as e:
         log_setup(f"[Shutdown] taskkill note: {e}")
 
-    time.sleep(0.5)
+    time.sleep(0.3)
 
 def wait_for_file_lock_release(exe_path: str, max_retries: int = 10) -> bool:
     """Polls open file handle to verify StudIQAgent.exe is unlocked before replacing."""
@@ -159,98 +178,115 @@ pause
         log_setup(f"Uninstaller creation note: {e}")
 
 def main():
-    log_setup("==========================================================")
-    log_setup("   STARTING STUDIQ AGENT INSTALLER EXECUTION              ")
-    log_setup("==========================================================")
-
-    # 1. Dynamic Drive Selection
-    install_dir, selected_drive, diag = select_optimal_installation_path(REQUIRED_FREE_SPACE_BYTES)
-    log_setup(f"Drive Diagnostics: {diag}")
-
-    if not install_dir or not selected_drive:
-        msg = "StudIQ Agent cannot be installed because there is not enough free disk space on any local drive."
-        log_setup(f"ERROR: {msg}")
-        show_dialog("StudIQ Setup Error", msg, is_error=True)
-        sys.exit(1)
-
-    log_setup(f"Selected Target Installation Path: {install_dir} (Drive {selected_drive})")
-    os.makedirs(install_dir, exist_ok=True)
-
-    # 2. Stop running agent & release file handles (Fix WinError 32)
-    gracefully_stop_running_agent()
-
-    exe_path = os.path.join(install_dir, "StudIQAgent.exe")
-    if not wait_for_file_lock_release(exe_path, max_retries=10):
-        log_setup(f"WARNING: File {exe_path} remains locked after retries. Attempting forced replacement...")
-
-    # 3. Locate and extract StudIQAgent.zip payload directly to install_dir
-    base_dir = get_base_dir()
-    zip_payload_path = os.path.join(base_dir, "StudIQAgent.zip")
-    if not os.path.exists(zip_payload_path):
-        zip_payload_path = os.path.join(base_dir, "installer", "StudIQAgent.zip")
-
-    if not os.path.exists(zip_payload_path):
-        # Fallback to direct directory copy if zip is not packaged
-        source_dir = os.path.join(base_dir, "payload")
-        if not os.path.exists(source_dir):
-            source_dir = os.path.join(base_dir, "dist", "StudIQAgent")
-
-        if os.path.exists(source_dir):
-            log_setup(f"Extracting directory payload from {source_dir} to {install_dir}...")
-            for item in os.listdir(source_dir):
-                s = os.path.join(source_dir, item)
-                d = os.path.join(install_dir, item)
-                if os.path.isdir(s):
-                    if os.path.exists(d):
-                        shutil.rmtree(d, ignore_errors=True)
-                    shutil.copytree(s, d)
-                else:
-                    shutil.copy2(s, d)
-        else:
-            msg = "StudIQ Agent payload archive (StudIQAgent.zip) was not found in setup package."
-            log_setup(f"ERROR: {msg}")
-            show_dialog("StudIQ Setup Error", msg, is_error=True)
-            sys.exit(1)
-    else:
-        log_setup(f"Extracting StudIQAgent.zip payload to {install_dir}...")
-        try:
-            with zipfile.ZipFile(zip_payload_path, 'r') as zip_ref:
-                zip_ref.extractall(install_dir)
-            log_setup("Zip payload extracted successfully.")
-        except Exception as e:
-            msg = f"Failed to extract StudIQAgent.zip: {e}"
-            log_setup(f"ERROR: {msg}")
-            show_dialog("StudIQ Setup Error", msg, is_error=True)
-            sys.exit(1)
-
-    # Verify StudIQAgent.exe exists after extraction
-    if not os.path.exists(exe_path):
-        msg = f"StudIQAgent.exe missing at {exe_path} after setup extraction."
-        log_setup(f"ERROR: {msg}")
-        show_dialog("StudIQ Setup Error", msg, is_error=True)
-        sys.exit(1)
-
-    log_setup(f"Verified executable file exists at: {exe_path}")
-
-    # 4. System Registrations & Shortcuts
-    register_protocol_handler(exe_path)
-    configure_autostart(exe_path)
-    create_shortcuts(exe_path, install_dir)
-    create_uninstaller(install_dir)
-
-    # 5. Launch Background Monitoring Agent
-    log_setup("Launching StudIQAgent daemon process...")
-    CREATE_NO_WINDOW = 0x08000000
-    CREATE_NEW_PROCESS_GROUP = 0x00000200
-    flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+    global is_silent_mode
+    if any(arg in sys.argv for arg in ["--silent", "-silent", "/silent", "--quiet", "-quiet", "/quiet"]):
+        is_silent_mode = True
 
     try:
-        subprocess.Popen([exe_path, "studiq-agent://start"], cwd=install_dir, creationflags=flags)
-        log_setup("StudIQ Agent process launched successfully.")
-    except Exception as e:
-        log_setup(f"Error launching agent daemon: {e}")
+        log_setup("==========================================================")
+        log_setup("   STARTING STUDIQ DESKTOP AGENT SETUP v1.3               ")
+        log_setup("==========================================================")
 
-    show_dialog("StudIQ Agent Setup Complete", f"StudIQ Desktop Agent was installed successfully!\n\nLocation: {install_dir}\nMonitoring service is active.")
+        # 1. Dynamic Path Resolution (%LOCALAPPDATA%\StudIQ\Agent)
+        install_dir, selected_drive, diag = select_optimal_installation_path(REQUIRED_FREE_SPACE_BYTES)
+        log_setup(f"Drive Diagnostics: {diag}")
+
+        if not install_dir or not selected_drive:
+            msg = "StudIQ Desktop Agent setup failed: Insufficient free disk space on all local drives."
+            log_setup(f"ERROR: {msg}")
+            show_dialog("StudIQ Setup Error", msg, is_error=True)
+            sys.exit(1)
+
+        log_setup(f"Selected Target Installation Path: {install_dir} (Drive {selected_drive})")
+        os.makedirs(install_dir, exist_ok=True)
+
+        # 2. Stop running agent & release file handles
+        gracefully_stop_running_agent()
+
+        exe_path = os.path.join(install_dir, "StudIQAgent.exe")
+        if not wait_for_file_lock_release(exe_path, max_retries=10):
+            log_setup(f"WARNING: File {exe_path} remains locked after retries. Attempting forced replacement...")
+
+        # 3. Locate and extract StudIQAgent.zip payload directly to install_dir
+        base_dir = get_base_dir()
+        zip_payload_path = os.path.join(base_dir, "StudIQAgent.zip")
+        if not os.path.exists(zip_payload_path):
+            zip_payload_path = os.path.join(base_dir, "installer", "StudIQAgent.zip")
+
+        if not os.path.exists(zip_payload_path):
+            # Fallback to direct directory copy if zip is not packaged
+            source_dir = os.path.join(base_dir, "payload")
+            if not os.path.exists(source_dir):
+                source_dir = os.path.join(base_dir, "dist", "StudIQAgent")
+
+            if os.path.exists(source_dir):
+                log_setup(f"Extracting directory payload from {source_dir} to {install_dir}...")
+                for item in os.listdir(source_dir):
+                    s = os.path.join(source_dir, item)
+                    d = os.path.join(install_dir, item)
+                    if os.path.isdir(s):
+                        if os.path.exists(d):
+                            shutil.rmtree(d, ignore_errors=True)
+                        shutil.copytree(s, d)
+                    else:
+                        shutil.copy2(s, d)
+            else:
+                msg = "StudIQ Desktop Agent payload archive (StudIQAgent.zip) was not found in setup package."
+                log_setup(f"ERROR: {msg}")
+                show_dialog("StudIQ Setup Error", msg, is_error=True)
+                sys.exit(1)
+        else:
+            log_setup(f"Extracting StudIQAgent.zip payload to {install_dir}...")
+            try:
+                with zipfile.ZipFile(zip_payload_path, 'r') as zip_ref:
+                    zip_ref.extractall(install_dir)
+                log_setup("Zip payload extracted successfully.")
+            except Exception as e:
+                msg = f"Failed to extract StudIQAgent.zip: {e}"
+                log_setup(f"ERROR: {msg}")
+                show_dialog("StudIQ Setup Error", msg, is_error=True)
+                sys.exit(1)
+
+        # Verify StudIQAgent.exe exists after extraction
+        if not os.path.exists(exe_path):
+            msg = f"StudIQAgent.exe missing at {exe_path} after setup extraction."
+            log_setup(f"ERROR: {msg}")
+            show_dialog("StudIQ Setup Error", msg, is_error=True)
+            sys.exit(1)
+
+        log_setup(f"Verified executable file exists at: {exe_path}")
+
+        # 4. System Registrations & Shortcuts
+        register_protocol_handler(exe_path)
+        configure_autostart(exe_path)
+        create_shortcuts(exe_path, install_dir)
+        create_uninstaller(install_dir)
+
+        # 5. Launch Background Monitoring Agent
+        log_setup("Launching StudIQAgent daemon process...")
+        CREATE_NO_WINDOW = 0x08000000
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+
+        try:
+            subprocess.Popen([exe_path, "studiq-agent://start"], cwd=install_dir, creationflags=flags)
+            log_setup("StudIQ Agent process launched successfully.")
+        except Exception as e:
+            log_setup(f"Error launching agent daemon: {e}")
+
+        log_setup("==========================================================")
+        log_setup(" SUCCESS: StudIQ Desktop Agent Setup Completed!")
+        log_setup(f" Installation Path: {install_dir}")
+        log_setup("==========================================================")
+
+        show_dialog("StudIQ Setup Complete", f"StudIQ Desktop Agent was installed successfully!\n\nLocation: {install_dir}\nBackground monitoring is active.")
+        sys.exit(0)
+
+    except Exception as e:
+        err_msg = f"StudIQ Desktop Agent setup failed:\n{e}"
+        log_setup(f"FATAL ERROR: {err_msg}")
+        show_dialog("StudIQ Setup Error", err_msg, is_error=True)
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

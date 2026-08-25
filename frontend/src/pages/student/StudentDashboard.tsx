@@ -177,7 +177,7 @@ export const StudentDashboard: React.FC = () => {
 
   const handleDownloadAndSetupAgent = async () => {
     setIsDownloadingSetup(true);
-    setAgentActionMessage('⬇️ Downloaded StudIQAgentSetup.bat (v1.3). Please click to run the installer file.');
+    setAgentActionMessage('⬇️ Downloaded StudIQAgentSetup.exe. Please double-click to run the setup installer.');
     await AgentBridgeService.downloadInstaller();
 
     // Poll for bridge coming online after user runs setup
@@ -187,7 +187,7 @@ export const StudentDashboard: React.FC = () => {
       setAgentConnected(true);
       setShowBridgeModal(false);
     } else {
-      setAgentActionMessage('🔴 Agent setup pending. Please run the downloaded StudIQAgentSetup.bat installer.');
+      setAgentActionMessage('🔴 Agent setup pending. Please run the downloaded StudIQAgentSetup.exe installer.');
     }
     setIsDownloadingSetup(false);
   };

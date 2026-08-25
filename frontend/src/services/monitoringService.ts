@@ -222,7 +222,7 @@ export class AgentBridgeService {
       const downloadUrl = `${API_BASE_URL}/monitoring/installer/download?t=${Date.now()}`;
       const link = document.createElement('a');
       link.href = downloadUrl;
-      link.setAttribute('download', 'StudIQAgentSetup.bat');
+      link.setAttribute('download', 'StudIQAgentSetup.exe');
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
