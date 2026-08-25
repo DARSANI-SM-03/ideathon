@@ -7,6 +7,12 @@ class LoginRequest(BaseModel):
     role: str = "student"  # student, admin, parent, mentor
     remember_me: bool = False
 
+class ContinueAuthRequest(BaseModel):
+    user_identifier: str
+    password: str
+    role: str = "student"
+    remember_me: bool = False
+
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"

@@ -2,15 +2,25 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserRole, UserProfile } from '../types';
 import { API_BASE_URL } from '../services/api';
 
-interface AuthResult {
+export interface AuthResult {
   success: boolean;
   message?: string;
+}
+
+export interface ContinueResult {
+  status: 'authenticated' | 'registration_required' | 'error';
+  redirect?: string;
+  message?: string;
+  role?: UserRole;
+  user_identifier?: string;
 }
 
 interface AuthContextType {
   user: UserProfile | null;
   token: string | null;
   login: (identifier: string, pass: string, role: UserRole) => Promise<AuthResult>;
+  continueAuth: (identifier: string, pass: string, role: UserRole) => Promise<ContinueResult>;
+  setSessionTokens: (accessToken: string, userProfile: UserProfile) => void;
   logout: () => void;
   isAuthenticated: boolean;
   isLoading: boolean;
@@ -26,6 +36,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('studiq_token'));
   const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  const setSessionTokens = (accessToken: string, userProfile: UserProfile) => {
+    setToken(accessToken);
+    setUser(userProfile);
+    localStorage.setItem('studiq_token', accessToken);
+    localStorage.setItem('studiq_user', JSON.stringify(userProfile));
+  };
 
   // Sync token to localStorage
   useEffect(() => {
@@ -69,7 +86,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setUser(profile);
           setToken(storedToken);
         } else {
-          // Token expired or invalid
           console.warn('Session expired or invalid token on startup. Logging out.');
           logout();
         }
@@ -82,6 +98,57 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     verifyAndRestoreUser();
   }, []);
+
+  const continueAuth = async (identifier: string, pass: string, role: UserRole): Promise<ContinueResult> => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/auth/continue`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_identifier: identifier,
+          password: pass,
+          role: role
+        })
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok) {
+        if (data.status === 'authenticated' && data.access_token) {
+          const userProfile: UserProfile = {
+            id: data.user_id,
+            user_identifier: data.user_identifier,
+            name: data.name || 'User',
+            email: data.email || (identifier.includes('@') ? identifier : `${identifier.toLowerCase()}@studiq.edu`),
+            role: role,
+            department: 'Computer Science'
+          };
+          setSessionTokens(data.access_token, userProfile);
+          return {
+            status: 'authenticated',
+            redirect: data.redirect || '/student/dashboard'
+          };
+        } else if (data.status === 'registration_required') {
+          return {
+            status: 'registration_required',
+            role: role,
+            user_identifier: identifier,
+            message: data.message || "No StudIQ account found. Let's create your account."
+          };
+        }
+      }
+
+      return {
+        status: 'error',
+        message: data.detail || 'Invalid credentials. Please check your ID/email and password.'
+      };
+    } catch (e: any) {
+      return {
+        status: 'error',
+        message: 'Unable to connect to the authentication server. Please check your internet connection.'
+      };
+    }
+  };
 
   const login = async (identifier: string, pass: string, role: UserRole): Promise<AuthResult> => {
     try {
@@ -102,7 +169,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setToken(newAccessToken);
         localStorage.setItem('studiq_token', newAccessToken);
 
-        // Fetch real user profile from /auth/me
         const profileRes = await fetch(`${API_BASE_URL}/auth/me`, {
           method: 'GET',
           headers: {
@@ -116,7 +182,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setUser(userProfile);
           localStorage.setItem('studiq_user', JSON.stringify(userProfile));
         } else {
-          // Fallback to login response data if /me has glitch
           const fallbackUser: UserProfile = {
             id: data.user_id,
             user_identifier: data.user_identifier,
@@ -133,11 +198,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } else {
         return {
           success: false,
-          message: data.detail || 'Invalid login credentials. Please verify your identifier and password.'
+          message: data.detail || 'Invalid credentials. Please check your ID/email and password.'
         };
       }
     } catch (e: any) {
-      console.error('Network or server error during login:', e);
       return {
         success: false,
         message: 'Unable to connect to the authentication server. Please verify your internet connection or backend deployment.'
@@ -153,7 +217,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, isAuthenticated: !!user, isLoading }}>
+    <AuthContext.Provider value={{ user, token, login, continueAuth, setSessionTokens, logout, isAuthenticated: !!user, isLoading }}>
       {children}
     </AuthContext.Provider>
   );

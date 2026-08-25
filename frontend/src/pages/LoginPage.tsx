@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { UserRole } from '../types';
+import { UserRole, UserProfile } from '../types';
 import { API_BASE_URL } from '../services/api';
 import {
   BrainCircuit,
@@ -29,20 +29,20 @@ import {
 import { Modal } from '../components/Modal';
 
 export const LoginPage: React.FC = () => {
-  const { login } = useAuth();
+  const { continueAuth, setSessionTokens } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const queryRole = searchParams.get('role') as UserRole | null;
   const [role, setRole] = useState<UserRole>(
-    queryRole && ['student', 'parent', 'mentor', 'admin'].includes(queryRole) ? queryRole : 'student'
+    queryRole && ['student', 'parent', 'mentor', 'admin', 'teacher'].includes(queryRole) ? queryRole : 'student'
   );
 
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [stage, setStage] = useState<'initial' | 'registration'>('initial');
   const [showPassword, setShowPassword] = useState(false);
 
-  // Sign in states
+  // Single Entry Form states (Start completely empty - zero demo data)
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
@@ -51,7 +51,7 @@ export const LoginPage: React.FC = () => {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  // Registration form states
+  // Registration form states (Empty defaults)
   const [fullName, setFullName] = useState('');
   const [studentId, setStudentId] = useState('');
   const [employeeId, setEmployeeId] = useState('');
@@ -62,12 +62,8 @@ export const LoginPage: React.FC = () => {
   const [year, setYear] = useState<number>(1);
   const [institutionType, setInstitutionType] = useState('college');
   const [phone, setPhone] = useState('');
-  const [parentName, setParentName] = useState('');
-  const [parentEmail, setParentEmail] = useState('');
-  const [parentPhone, setParentPhone] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [agreedToTerms, setAgreedToTerms] = useState(false);
-  const [registrationSuccess, setRegistrationSuccess] = useState(false);
 
   // Forgot / Reset Password state
   const [forgotEmail, setForgotEmail] = useState('');
@@ -81,11 +77,11 @@ export const LoginPage: React.FC = () => {
     setSearchParams({ role: newRole }, { replace: true });
     setErrorMsg('');
     setSuccessMsg('');
-    setRegistrationSuccess(false);
+    setStage('initial');
   };
 
   useEffect(() => {
-    if (queryRole && ['student', 'parent', 'mentor', 'admin'].includes(queryRole)) {
+    if (queryRole && ['student', 'parent', 'mentor', 'admin', 'teacher'].includes(queryRole)) {
       setRole(queryRole);
     }
   }, [queryRole]);
@@ -93,19 +89,20 @@ export const LoginPage: React.FC = () => {
   useEffect(() => {
     setErrorMsg('');
     setSuccessMsg('');
-    setRegistrationSuccess(false);
-  }, [role, mode]);
+  }, [role, stage]);
 
   const getRedirectPath = (r: UserRole) => {
     switch (r) {
       case 'parent': return '/parent/dashboard';
       case 'mentor': return '/mentor/dashboard';
+      case 'teacher': return '/teacher/dashboard';
       case 'admin': return '/admin/dashboard';
       default: return '/student/dashboard';
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // Unified Continue Action
+  const handleContinue = async (e: React.FormEvent) => {
     e.preventDefault();
     if (loading) return;
     setLoading(true);
@@ -113,31 +110,42 @@ export const LoginPage: React.FC = () => {
     setSuccessMsg('');
 
     if (!identifier.trim() || !password.trim()) {
-      setErrorMsg('Please enter both your email/student ID and password.');
+      setErrorMsg('Please enter both your Email / ID and password.');
       setLoading(false);
       return;
     }
 
     try {
-      const res = await login(identifier, password, role);
-      if (res.success) {
-        navigate(getRedirectPath(role));
-      } else {
-        // User-friendly error mapping - no raw HTTP errors displayed
-        const raw = res.message || '';
-        if (raw.toLowerCase().includes('401') || raw.toLowerCase().includes('invalid') || raw.toLowerCase().includes('unauthorized') || raw.toLowerCase().includes('credentials')) {
-          setErrorMsg('Incorrect email/student ID or password.');
+      const res = await continueAuth(identifier, password, role);
+      if (res.status === 'authenticated' && res.redirect) {
+        setSuccessMsg('Welcome back! Signing you in...');
+        setTimeout(() => {
+          navigate(res.redirect || getRedirectPath(role));
+        }, 500);
+      } else if (res.status === 'registration_required') {
+        if (role === 'admin') {
+          setErrorMsg('Admin account not found. Please contact the system administrator.');
         } else {
-          setErrorMsg(raw || 'Incorrect email/student ID or password.');
+          setStage('registration');
+          if (identifier.includes('@')) {
+            setRegEmail(identifier);
+          } else {
+            setStudentId(identifier);
+            setEmployeeId(identifier);
+          }
+          setSuccessMsg("No StudIQ account found. Let's create your account.");
         }
+      } else {
+        setErrorMsg(res.message || 'Invalid credentials. Please check your ID/email and password.');
       }
     } catch (err: any) {
-      setErrorMsg('Unable to log in. Please verify your credentials and network connection.');
+      setErrorMsg('Unable to connect to the authentication server. Please check your network connection.');
     } finally {
       setLoading(false);
     }
   };
 
+  // Role Registration Action
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (loading) return;
@@ -145,7 +153,6 @@ export const LoginPage: React.FC = () => {
     setErrorMsg('');
     setSuccessMsg('');
 
-    // Required fields check
     if (!fullName.trim() || !regEmail.trim() || !password.trim()) {
       setErrorMsg('Please fill in all required fields.');
       setLoading(false);
@@ -158,21 +165,18 @@ export const LoginPage: React.FC = () => {
       return;
     }
 
-    // Password strength check
     if (password.length < 6) {
       setErrorMsg('Password must be at least 6 characters long.');
       setLoading(false);
       return;
     }
 
-    // Confirm password match check
     if (password !== confirmPassword) {
       setErrorMsg('Passwords do not match. Please re-enter your password.');
       setLoading(false);
       return;
     }
 
-    // Terms agreement check
     if (!agreedToTerms) {
       setErrorMsg('You must agree to the Terms of Service & Privacy Policy to register.');
       setLoading(false);
@@ -194,9 +198,8 @@ export const LoginPage: React.FC = () => {
           semester: Number(semester),
           year: Number(year),
           password,
-          parent_name: parentName || 'Eleanor Mercer',
-          parent_email: parentEmail || 'parent.mercer@gmail.com',
-          parent_phone: parentPhone || '+1 555-019-2834'
+          parent_email: regEmail,
+          parent_phone: phone
         };
       } else if (role === 'parent') {
         endpoint = `${API_BASE_URL}/auth/register/parent`;
@@ -206,22 +209,13 @@ export const LoginPage: React.FC = () => {
           phone,
           password
         };
-      } else if (role === 'mentor') {
+      } else if (role === 'mentor' || role === 'teacher') {
         endpoint = `${API_BASE_URL}/auth/register/mentor`;
         bodyData = {
           full_name: fullName,
-          employee_id: employeeId,
+          employee_id: employeeId || studentId,
           email: regEmail,
           department,
-          password
-        };
-      } else if (role === 'admin') {
-        endpoint = `${API_BASE_URL}/auth/register/admin`;
-        bodyData = {
-          college_name: collegeName,
-          institution_type: institutionType,
-          full_name: fullName,
-          email: regEmail,
           password
         };
       }
@@ -234,12 +228,30 @@ export const LoginPage: React.FC = () => {
 
       const resData = await res.json().catch(() => ({}));
       if (res.ok) {
-        setRegistrationSuccess(true);
-        setIdentifier(role === 'student' ? studentId : regEmail);
+        if (resData.access_token) {
+          const userProfile: UserProfile = {
+            id: resData.user_id,
+            user_identifier: resData.user_identifier,
+            name: resData.name || fullName,
+            email: resData.email || regEmail,
+            role: role,
+            department: department || 'General'
+          };
+          setSessionTokens(resData.access_token, userProfile);
+          setSuccessMsg('Account created successfully. Signing you in...');
+          setTimeout(() => {
+            navigate(resData.redirect || getRedirectPath(role));
+          }, 800);
+        } else {
+          setSuccessMsg('Account created successfully. Signing you in...');
+          setTimeout(() => {
+            navigate(getRedirectPath(role));
+          }, 800);
+        }
       } else {
         const detail = resData.detail || '';
         if (detail.includes('already registered') || detail.includes('already exists')) {
-          setErrorMsg('An account with this Student ID or Email already exists.');
+          setErrorMsg('An account with this ID or Email already exists.');
         } else {
           setErrorMsg(detail || 'Registration failed. Please check your details and try again.');
         }
@@ -445,24 +457,24 @@ export const LoginPage: React.FC = () => {
           </div>
 
           <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 text-[11px] font-mono text-slate-400 flex items-center justify-between">
-            <span>Quick Autofill Credential:</span>
-            <span className="text-emerald-400 font-bold">{currentConfig.demoHelp}</span>
+            <span>Authentication Security:</span>
+            <span className="text-emerald-400 font-bold">256-Bit Encrypted JWT</span>
           </div>
         </div>
 
         {/* Right Side Glass Form Card */}
         <div className="lg:col-span-7 w-full max-w-md mx-auto space-y-5">
           
-          {/* Role Tabs */}
-          <div className="grid grid-cols-4 gap-1.5 p-1.5 rounded-2xl bg-slate-900/90 border border-slate-800 backdrop-blur-xl shadow-xl">
-            {(['student', 'parent', 'mentor', 'admin'] as UserRole[]).map((r) => (
+          {/* Role Selector Tabs (5 Roles) */}
+          <div className="grid grid-cols-5 gap-1 p-1.5 rounded-2xl bg-slate-900/90 border border-slate-800 backdrop-blur-xl shadow-xl text-center">
+            {(['student', 'parent', 'mentor', 'teacher', 'admin'] as UserRole[]).map((r) => (
               <button
                 key={r}
                 type="button"
                 onClick={() => handleRoleChange(r)}
-                className={`py-2.5 px-2 rounded-xl text-xs transition capitalize flex flex-col items-center gap-1 font-bold ${
+                className={`py-2 px-1 rounded-xl text-[11px] transition capitalize font-bold ${
                   role === r
-                    ? roleConfigs[r].activeTab
+                    ? roleConfigs[r]?.activeTab || 'bg-brand-600 text-white'
                     : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
                 }`}
               >
@@ -471,35 +483,13 @@ export const LoginPage: React.FC = () => {
             ))}
           </div>
 
-          {/* Mode Switcher: Sign In vs Sign Up */}
-          <div className="flex bg-slate-900/90 p-1.5 rounded-xl border border-slate-800 text-xs font-bold shadow-md">
-            <button
-              type="button"
-              onClick={() => { setMode('signin'); setErrorMsg(''); setSuccessMsg(''); }}
-              className={`flex-1 py-2 rounded-lg transition ${
-                mode === 'signin' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Sign In
-            </button>
-            <button
-              type="button"
-              onClick={() => { setMode('signup'); setErrorMsg(''); setSuccessMsg(''); }}
-              className={`flex-1 py-2 rounded-lg transition ${
-                mode === 'signup' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Create Account
-            </button>
-          </div>
-
-          {/* Form Header Title Mobile */}
-          <div className="text-center lg:hidden">
-            <h1 className="text-xl font-black text-white">
-              {mode === 'signin' ? currentConfig.title : `Register ${role.toUpperCase()} Account`}
+          {/* Form Header Title */}
+          <div className="text-center">
+            <h1 className="text-2xl font-black text-white tracking-tight">
+              STUDIQ AUTHENTICATION
             </h1>
             <p className="text-xs text-slate-400 mt-1">
-              {currentConfig.subtitle}
+              Secure access to your personalized StudIQ portal.
             </p>
           </div>
 
@@ -520,11 +510,12 @@ export const LoginPage: React.FC = () => {
 
           {/* Auth Glass Card */}
           <div className="glass-card rounded-3xl p-6 sm:p-8 border border-slate-800 bg-slate-900/70 backdrop-blur-xl shadow-2xl space-y-5">
-            {mode === 'signin' ? (
-              <form onSubmit={handleSubmit} className="space-y-4">
+            {stage === 'initial' ? (
+              /* SINGLE CONTINUE ENTRY FORM */
+              <form onSubmit={handleContinue} className="space-y-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    {currentConfig.label}
+                    {role === 'student' ? 'Student ID / Email Address' : role === 'admin' ? 'Username / Official Email' : 'Email / Employee ID'}
                   </label>
                   <div className="relative">
                     <User className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -532,7 +523,7 @@ export const LoginPage: React.FC = () => {
                       type="text"
                       value={identifier}
                       onChange={(e) => setIdentifier(e.target.value)}
-                      placeholder={currentConfig.placeholder}
+                      placeholder={`Enter your registered ${role} Email or ID`}
                       className="w-full bg-slate-950/80 border border-slate-800 rounded-xl pl-10 pr-4 py-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-brand-500 transition font-medium"
                       required
                     />
@@ -590,59 +581,70 @@ export const LoginPage: React.FC = () => {
                   {loading ? (
                     <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                   ) : (
-                    <>Sign In to {role.toUpperCase()} Portal →</>
+                    <>Continue →</>
                   )}
                 </button>
               </form>
             ) : (
-              /* REGISTRATION FORM */
+              /* ROLE REGISTRATION FORM (When Account Not Found) */
               <form onSubmit={handleSignUp} className="space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-2">
+                  <span className="text-xs font-bold text-slate-300">Create {role.toUpperCase()} Profile</span>
+                  <button
+                    type="button"
+                    onClick={() => setStage('initial')}
+                    className="text-[11px] text-slate-400 hover:text-white underline"
+                  >
+                    ← Change ID/Email
+                  </button>
+                </div>
+
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">Full Name</label>
                   <input
                     type="text"
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
-                    placeholder="Alex Mercer"
+                    placeholder="Enter your full name"
                     className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
                     required
                   />
                 </div>
 
                 {role === 'student' && (
-                  <>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">Student ID</label>
-                        <input
-                          type="text"
-                          value={studentId}
-                          onChange={(e) => setStudentId(e.target.value)}
-                          className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
-                          required
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-300 mb-1">Department</label>
-                        <input
-                          type="text"
-                          value={department}
-                          onChange={(e) => setDepartment(e.target.value)}
-                          className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
-                          required
-                        />
-                      </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">Student ID</label>
+                      <input
+                        type="text"
+                        value={studentId}
+                        onChange={(e) => setStudentId(e.target.value)}
+                        placeholder="e.g. STU-2026-001"
+                        className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                        required
+                      />
                     </div>
-                  </>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">Department</label>
+                      <input
+                        type="text"
+                        value={department}
+                        onChange={(e) => setDepartment(e.target.value)}
+                        className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                        required
+                      />
+                    </div>
+                  </div>
                 )}
 
-                {role === 'mentor' && (
+                {(role === 'mentor' || role === 'teacher') && (
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1">Employee ID</label>
                     <input
                       type="text"
                       value={employeeId}
                       onChange={(e) => setEmployeeId(e.target.value)}
+                      placeholder="e.g. EMP-2026-001"
                       className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white"
                       required
                     />
@@ -700,41 +702,17 @@ export const LoginPage: React.FC = () => {
                   </label>
                 </div>
 
-                {registrationSuccess ? (
-                  <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 space-y-3 text-center animate-in zoom-in-95">
-                    <div className="w-10 h-10 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto">
-                      <CheckCircle2 className="w-6 h-6" />
-                    </div>
-                    <h3 className="text-sm font-bold text-emerald-300">Account created successfully</h3>
-                    <p className="text-xs text-slate-300">
-                      Your account is ready. Please log in with your credentials to access the portal.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMode('signin');
-                        setRegistrationSuccess(false);
-                        setErrorMsg('');
-                        setSuccessMsg('');
-                      }}
-                      className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black transition"
-                    >
-                      Continue to Login →
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className={`w-full py-3.5 rounded-xl text-white text-xs font-black transition flex items-center justify-center gap-2 ${currentConfig.buttonBg}`}
-                  >
-                    {loading ? (
-                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    ) : (
-                      <>Create {role.toUpperCase()} Account →</>
-                    )}
-                  </button>
-                )}
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className={`w-full py-3.5 rounded-xl text-white text-xs font-black transition flex items-center justify-center gap-2 ${currentConfig.buttonBg}`}
+                >
+                  {loading ? (
+                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <>Create Account & Sign In →</>
+                  )}
+                </button>
               </form>
             )}
           </div>

@@ -4,7 +4,7 @@ from typing import Dict, Any
 from app.database.session import get_db
 from datetime import datetime
 from app.schemas.auth import (
-    LoginRequest, Token, UserProfile,
+    LoginRequest, Token, UserProfile, ContinueAuthRequest,
     StudentRegisterRequest, ParentRegisterRequest, AdminRegisterRequest, MentorRegisterRequest
 )
 from app.models.user import Student, Admin, Teacher, Mentor, Parent, ParentApprovalRequest
@@ -18,6 +18,112 @@ from app.auth.security import (
 from app.auth.dependencies import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+@router.post("/continue")
+def continue_auth(request: ContinueAuthRequest, db: Session = Depends(get_db)):
+    role = request.role.lower()
+    user_identifier = request.user_identifier.strip()
+    password = request.password
+
+    if not user_identifier or not password:
+        raise HTTPException(status_code=400, detail="User ID/Email and Password are required.")
+
+    account_found = False
+    user_obj = None
+
+    if role == "student":
+        user_obj = db.query(Student).filter(
+            (Student.student_id == user_identifier) | (Student.email == user_identifier)
+        ).first()
+        if user_obj:
+            account_found = True
+    elif role == "admin":
+        user_obj = db.query(Admin).filter(
+            (Admin.username == user_identifier) | (Admin.email == user_identifier)
+        ).first()
+        if user_obj:
+            account_found = True
+        else:
+            raise HTTPException(
+                status_code=403,
+                detail="Admin account not found. Please contact the system administrator."
+            )
+    elif role == "mentor":
+        user_obj = db.query(Mentor).filter(
+            (Mentor.employee_id == user_identifier) | (Mentor.email == user_identifier)
+        ).first()
+        if user_obj:
+            account_found = True
+    elif role == "teacher":
+        user_obj = db.query(Teacher).filter(
+            (Teacher.teacher_id == user_identifier) | (Teacher.email == user_identifier)
+        ).first()
+        if user_obj:
+            account_found = True
+    elif role == "parent":
+        user_obj = db.query(Parent).filter(Parent.email == user_identifier).first()
+        if user_obj:
+            account_found = True
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported role '{role}'")
+
+    if not account_found or not user_obj:
+        return {
+            "status": "registration_required",
+            "role": role,
+            "user_identifier": user_identifier,
+            "message": "No StudIQ account found. Let's create your account."
+        }
+
+    # Verify Password for existing account
+    if not verify_password(password, user_obj.password_hash):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid credentials. Please check your ID/email and password."
+        )
+
+    # Determine user identifier string
+    sub = (
+        getattr(user_obj, "student_id", None) or
+        getattr(user_obj, "employee_id", None) or
+        getattr(user_obj, "parent_id", None) or
+        getattr(user_obj, "username", None) or
+        getattr(user_obj, "teacher_id", None) or
+        user_obj.email
+    )
+
+    name = getattr(user_obj, "full_name", None) or getattr(user_obj, "name", "User")
+    payload_data = {
+        "sub": sub,
+        "role": role,
+        "user_id": user_obj.id,
+        "name": name,
+        "email": user_obj.email
+    }
+
+    access_token = create_access_token(data=payload_data)
+    refresh_token = create_refresh_token(data=payload_data)
+
+    redirect_map = {
+        "student": "/student/dashboard",
+        "parent": "/parent/dashboard",
+        "mentor": "/mentor/dashboard",
+        "teacher": "/teacher/dashboard",
+        "admin": "/admin/dashboard"
+    }
+
+    return {
+        "status": "authenticated",
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "role": role,
+        "user_id": user_obj.id,
+        "user_identifier": sub,
+        "name": name,
+        "email": user_obj.email,
+        "redirect": redirect_map.get(role, "/student/dashboard")
+    }
 
 @router.post("/register/student")
 def register_student(req: StudentRegisterRequest, db: Session = Depends(get_db)):
@@ -71,10 +177,28 @@ def register_student(req: StudentRegisterRequest, db: Session = Depends(get_db))
         db.add(notif)
         db.commit()
 
+    payload_data = {
+        "sub": new_student.student_id,
+        "role": "student",
+        "user_id": new_student.id,
+        "name": new_student.full_name,
+        "email": new_student.email
+    }
+    access_token = create_access_token(data=payload_data)
+    refresh_token = create_refresh_token(data=payload_data)
+
     return {
         "status": "success",
-        "message": f"Account created successfully! You can now log in with {req.email} or {req.student_id}.",
-        "student_id": new_student.student_id
+        "message": "Account created successfully. Signing you in...",
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "role": "student",
+        "user_id": new_student.id,
+        "user_identifier": new_student.student_id,
+        "name": new_student.full_name,
+        "email": new_student.email,
+        "redirect": "/student/dashboard"
     }
 
 @router.post("/register/parent")
@@ -83,8 +207,9 @@ def register_parent(req: ParentRegisterRequest, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Parent account with this email already exists.")
 
+    parent_id = f"PAR-{int(datetime.utcnow().timestamp())}"
     new_parent = Parent(
-        parent_id=f"PAR-{int(datetime.utcnow().timestamp())}",
+        parent_id=parent_id,
         full_name=req.full_name,
         name=req.full_name,
         email=req.email,
@@ -93,26 +218,35 @@ def register_parent(req: ParentRegisterRequest, db: Session = Depends(get_db)):
     )
     db.add(new_parent)
     db.commit()
+    db.refresh(new_parent)
 
-    return {"status": "success", "message": "Parent account created successfully."}
+    payload_data = {
+        "sub": parent_id,
+        "role": "parent",
+        "user_id": new_parent.id,
+        "name": new_parent.full_name,
+        "email": new_parent.email
+    }
+    access_token = create_access_token(data=payload_data)
+    refresh_token = create_refresh_token(data=payload_data)
+
+    return {
+        "status": "success",
+        "message": "Account created successfully. Signing you in...",
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "role": "parent",
+        "user_id": new_parent.id,
+        "user_identifier": parent_id,
+        "name": new_parent.full_name,
+        "email": new_parent.email,
+        "redirect": "/parent/dashboard"
+    }
 
 @router.post("/register/admin")
 def register_admin(req: AdminRegisterRequest, db: Session = Depends(get_db)):
-    existing = db.query(Admin).filter(Admin.email == req.email).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Admin account with this email already exists.")
-
-    new_admin = Admin(
-        username=req.email.split("@")[0],
-        full_name=req.full_name,
-        name=req.full_name,
-        email=req.email,
-        password_hash=get_password_hash(req.password)
-    )
-    db.add(new_admin)
-    db.commit()
-
-    return {"status": "success", "message": "Admin account registered successfully."}
+    raise HTTPException(status_code=403, detail="Admin account not found. Please contact the system administrator.")
 
 @router.post("/register/mentor")
 def register_mentor(req: MentorRegisterRequest, db: Session = Depends(get_db)):
@@ -133,8 +267,31 @@ def register_mentor(req: MentorRegisterRequest, db: Session = Depends(get_db)):
     )
     db.add(new_mentor)
     db.commit()
+    db.refresh(new_mentor)
 
-    return {"status": "success", "message": "Faculty Mentor account registered successfully."}
+    payload_data = {
+        "sub": new_mentor.employee_id,
+        "role": "mentor",
+        "user_id": new_mentor.id,
+        "name": new_mentor.full_name,
+        "email": new_mentor.email
+    }
+    access_token = create_access_token(data=payload_data)
+    refresh_token = create_refresh_token(data=payload_data)
+
+    return {
+        "status": "success",
+        "message": "Account created successfully. Signing you in...",
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "role": "mentor",
+        "user_id": new_mentor.id,
+        "user_identifier": new_mentor.employee_id,
+        "name": new_mentor.full_name,
+        "email": new_mentor.email,
+        "redirect": "/mentor/dashboard"
+    }
 
 @router.post("/login")
 def login(request: LoginRequest, db: Session = Depends(get_db)):
