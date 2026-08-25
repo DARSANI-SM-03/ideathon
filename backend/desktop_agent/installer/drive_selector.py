@@ -1,9 +1,8 @@
 """
-StudIQ Windows Dynamic Drive Selection Module
-==============================================
-Discovers available Windows local fixed drives, checks disk space,
-and dynamically calculates the optimal installation directory for StudIQ Agent.
-Prioritizes E:\\ drive when present with free space, falling back to D: or C:.
+StudIQ Windows Dynamic Drive & Path Resolution Module
+======================================================
+Resolves the Windows per-user installation directory (%LOCALAPPDATA%\StudIQ\Agent)
+and verifies disk space availability without hardcoded drive letters.
 """
 
 import os
@@ -48,26 +47,27 @@ def get_drive_free_space(drive_path: str) -> int:
 
 def select_optimal_installation_path(required_bytes: int = REQUIRED_FREE_SPACE_BYTES) -> Tuple[Optional[str], Optional[str], Dict[str, Any]]:
     """
-    Dynamically selects the optimal Windows installation directory.
+    Dynamically resolves the Windows per-user installation directory (%LOCALAPPDATA%\StudIQ\Agent).
     Selection Rules:
-      1. Prefer E:\\ drive if free space >= required_bytes.
-      2. Prefer fixed non-system drives (e.g. D:\\) with free space >= required_bytes.
-      3. Prefer drive containing %LOCALAPPDATA% if free space >= required_bytes.
-      4. Fall back to system drive (C:\\) if free space >= required_bytes.
-      5. Return None if no drive has sufficient space.
+      1. Default to %LOCALAPPDATA%\StudIQ\Agent if LocalAppData drive has free space >= required_bytes.
+      2. If LocalAppData drive has insufficient space, fall back to any available fixed drive.
+      3. Return None if no drive has sufficient space.
     """
-    fixed_drives = get_windows_fixed_drives()
-    local_app_data = os.getenv("LOCALAPPDATA", "")
-    system_drive = os.getenv("SystemDrive", "C:").upper().rstrip("\\") + "\\"
+    local_app_data = os.getenv("LOCALAPPDATA")
+    if not local_app_data:
+        user_profile = os.getenv("USERPROFILE", os.path.expanduser("~"))
+        local_app_data = os.path.join(user_profile, "AppData", "Local")
 
-    app_data_drive = None
-    if local_app_data and len(local_app_data) >= 3 and local_app_data[1:3] == ":\\":
+    fixed_drives = get_windows_fixed_drives()
+
+    app_data_drive = "C:\\"
+    if len(local_app_data) >= 3 and local_app_data[1:3] == ":\\":
         app_data_drive = local_app_data[:3].upper()
 
     diagnostics = {
-        "fixed_drives_found": fixed_drives,
-        "system_drive": system_drive,
+        "local_app_data": local_app_data,
         "app_data_drive": app_data_drive,
+        "fixed_drives_found": fixed_drives,
         "drive_space_map": {}
     }
 
@@ -75,51 +75,39 @@ def select_optimal_installation_path(required_bytes: int = REQUIRED_FREE_SPACE_B
         free_bytes = get_drive_free_space(d)
         diagnostics["drive_space_map"][d] = free_bytes
 
-    # Rule 1: Check E:\ drive top preference
-    e_drives = [d for d in fixed_drives if d.upper().startswith("E:")]
-    if e_drives and get_drive_free_space(e_drives[0]) >= required_bytes:
-        install_path = os.path.join(e_drives[0], "StudIQ", "Agent")
-        return install_path, e_drives[0], diagnostics
+    # Rule 1: Check LocalAppData drive
+    app_data_free = get_drive_free_space(app_data_drive)
+    if app_data_free >= required_bytes:
+        install_path = os.path.join(local_app_data, "StudIQ", "Agent")
+        return install_path, app_data_drive, diagnostics
 
-    # Rule 2: Prefer non-system fixed drives (e.g. D:\)
-    non_system_drives = [d for d in fixed_drives if d.upper() != system_drive]
-    for d in non_system_drives:
+    # Rule 2: Fallback to any fixed drive with space
+    for d in fixed_drives:
         if get_drive_free_space(d) >= required_bytes:
             install_path = os.path.join(d, "StudIQ", "Agent")
             return install_path, d, diagnostics
 
-    # Rule 3: Check AppData drive
-    if app_data_drive and app_data_drive in fixed_drives:
-        if get_drive_free_space(app_data_drive) >= required_bytes:
-            install_path = os.path.join(local_app_data, "StudIQ", "Agent")
-            return install_path, app_data_drive, diagnostics
-
-    # Rule 4: Fall back to system drive (C:\)
-    if system_drive in fixed_drives and get_drive_free_space(system_drive) >= required_bytes:
-        install_path = os.path.join(system_drive, "StudIQ", "Agent")
-        return install_path, system_drive, diagnostics
-
-    # Rule 5: Insufficient space across all drives
+    # Rule 3: Insufficient space across all drives
     return None, None, diagnostics
 
 def simulate_drive_selection(mock_drives_space: Dict[str, int], required_bytes: int = REQUIRED_FREE_SPACE_BYTES) -> Optional[str]:
     """
-    Simulation helper to verify drive selection logic across arbitrary drive configurations.
+    Simulation helper to verify per-user drive selection logic across arbitrary drive configurations.
     """
-    system_drive = "C:\\"
+    local_app_data = os.getenv("LOCALAPPDATA")
+    if not local_app_data:
+        user_profile = os.getenv("USERPROFILE", os.path.expanduser("~"))
+        local_app_data = os.path.join(user_profile, "AppData", "Local")
 
-    # 1. E:\ drive preference
+    app_data_drive = "C:\\"
+    if len(local_app_data) >= 3 and local_app_data[1:3] == ":\\":
+        app_data_drive = local_app_data[:3].upper()
+
+    if app_data_drive in mock_drives_space and mock_drives_space[app_data_drive] >= required_bytes:
+        return os.path.join(local_app_data, "StudIQ", "Agent")
+
     for d, free_b in mock_drives_space.items():
-        if d.upper().startswith("E:") and free_b >= required_bytes:
+        if free_b >= required_bytes:
             return os.path.join(d, "StudIQ", "Agent")
-
-    # 2. Non-system fixed drives
-    for d, free_b in mock_drives_space.items():
-        if d.upper() != system_drive and free_b >= required_bytes:
-            return os.path.join(d, "StudIQ", "Agent")
-
-    # 3. System drive
-    if system_drive in mock_drives_space and mock_drives_space[system_drive] >= required_bytes:
-        return os.path.join(system_drive, "StudIQ", "Agent")
 
     return None
