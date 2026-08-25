@@ -66,12 +66,22 @@ export const LoginPage: React.FC = () => {
   const [parentEmail, setParentEmail] = useState('');
   const [parentPhone, setParentPhone] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [registrationSuccess, setRegistrationSuccess] = useState(false);
+
+  // Forgot / Reset Password state
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [resetToken, setResetToken] = useState('');
+  const [newResetPassword, setNewResetPassword] = useState('');
+  const [resetStage, setResetStage] = useState<'request' | 'reset'>('request');
 
   const handleRoleChange = (newRole: UserRole) => {
     setRole(newRole);
     setSearchParams({ role: newRole }, { replace: true });
     setErrorMsg('');
     setSuccessMsg('');
+    setRegistrationSuccess(false);
   };
 
   useEffect(() => {
@@ -83,6 +93,7 @@ export const LoginPage: React.FC = () => {
   useEffect(() => {
     setErrorMsg('');
     setSuccessMsg('');
+    setRegistrationSuccess(false);
   }, [role, mode]);
 
   const getRedirectPath = (r: UserRole) => {
@@ -96,12 +107,13 @@ export const LoginPage: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return;
     setLoading(true);
     setErrorMsg('');
     setSuccessMsg('');
 
     if (!identifier.trim() || !password.trim()) {
-      setErrorMsg('Please enter both your identifier and password.');
+      setErrorMsg('Please enter both your email/student ID and password.');
       setLoading(false);
       return;
     }
@@ -111,10 +123,16 @@ export const LoginPage: React.FC = () => {
       if (res.success) {
         navigate(getRedirectPath(role));
       } else {
-        setErrorMsg(res.message || 'Invalid credentials. Please verify your identity and password.');
+        // User-friendly error mapping - no raw HTTP errors displayed
+        const raw = res.message || '';
+        if (raw.toLowerCase().includes('401') || raw.toLowerCase().includes('invalid') || raw.toLowerCase().includes('unauthorized') || raw.toLowerCase().includes('credentials')) {
+          setErrorMsg('Incorrect email/student ID or password.');
+        } else {
+          setErrorMsg(raw || 'Incorrect email/student ID or password.');
+        }
       }
     } catch (err: any) {
-      setErrorMsg(err.message || 'Authentication service error.');
+      setErrorMsg('Unable to log in. Please verify your credentials and network connection.');
     } finally {
       setLoading(false);
     }
@@ -122,18 +140,41 @@ export const LoginPage: React.FC = () => {
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return;
     setLoading(true);
     setErrorMsg('');
     setSuccessMsg('');
 
-    if (password !== confirmPassword) {
-      setErrorMsg('Passwords do not match.');
+    // Required fields check
+    if (!fullName.trim() || !regEmail.trim() || !password.trim()) {
+      setErrorMsg('Please fill in all required fields.');
       setLoading(false);
       return;
     }
 
-    if (!regEmail.trim()) {
-      setErrorMsg('Please enter a valid email address.');
+    if (role === 'student' && !studentId.trim()) {
+      setErrorMsg('Please enter your Student ID.');
+      setLoading(false);
+      return;
+    }
+
+    // Password strength check
+    if (password.length < 6) {
+      setErrorMsg('Password must be at least 6 characters long.');
+      setLoading(false);
+      return;
+    }
+
+    // Confirm password match check
+    if (password !== confirmPassword) {
+      setErrorMsg('Passwords do not match. Please re-enter your password.');
+      setLoading(false);
+      return;
+    }
+
+    // Terms agreement check
+    if (!agreedToTerms) {
+      setErrorMsg('You must agree to the Terms of Service & Privacy Policy to register.');
       setLoading(false);
       return;
     }
@@ -191,21 +232,78 @@ export const LoginPage: React.FC = () => {
         body: JSON.stringify(bodyData)
       });
 
-      const resData = await res.json();
+      const resData = await res.json().catch(() => ({}));
       if (res.ok) {
-        setSuccessMsg(resData.message || 'Registration successful! Switching to Sign In...');
+        setRegistrationSuccess(true);
         setIdentifier(role === 'student' ? studentId : regEmail);
-        setTimeout(() => {
-          setMode('signin');
-          setSuccessMsg('');
-        }, 1500);
       } else {
-        setErrorMsg(resData.detail || 'Registration failed.');
+        const detail = resData.detail || '';
+        if (detail.includes('already registered') || detail.includes('already exists')) {
+          setErrorMsg('An account with this Student ID or Email already exists.');
+        } else {
+          setErrorMsg(detail || 'Registration failed. Please check your details and try again.');
+        }
       }
-    } catch (e) {
-      setErrorMsg('Registration service offline. Please try again.');
+    } catch (err: any) {
+      setErrorMsg('Unable to complete registration. Please check your network connection.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!forgotEmail.trim()) {
+      setErrorMsg('Please enter your email address.');
+      return;
+    }
+    setForgotLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: forgotEmail })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.reset_token) {
+        setResetToken(data.reset_token);
+        setResetStage('reset');
+        setSuccessMsg("Check your email. We've sent instructions to reset your password.");
+      } else {
+        setSuccessMsg("Check your email. We've sent instructions to reset your password.");
+      }
+    } catch (e) {
+      setErrorMsg('Failed to process password reset request.');
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newResetPassword || newResetPassword.length < 6) {
+      setErrorMsg('New password must be at least 6 characters long.');
+      return;
+    }
+    setForgotLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reset_token: resetToken, new_password: newResetPassword })
+      });
+      if (res.ok) {
+        setForgotModalOpen(false);
+        setResetStage('request');
+        setSuccessMsg('Password successfully reset! You can now log in with your new password.');
+        setPassword(newResetPassword);
+      } else {
+        setErrorMsg('Invalid or expired password reset token.');
+      }
+    } catch (e) {
+      setErrorMsg('Error resetting password.');
+    } finally {
+      setForgotLoading(false);
     }
   };
 
@@ -570,6 +668,7 @@ export const LoginPage: React.FC = () => {
                       type="password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Min. 6 characters"
                       className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
                       required
                     />
@@ -580,23 +679,62 @@ export const LoginPage: React.FC = () => {
                       type="password"
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Repeat password"
                       className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
                       required
                     />
                   </div>
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className={`w-full py-3.5 rounded-xl text-white text-xs font-black transition flex items-center justify-center gap-2 ${currentConfig.buttonBg}`}
-                >
-                  {loading ? (
-                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <>Create {role.toUpperCase()} Account →</>
-                  )}
-                </button>
+                <div className="flex items-center gap-2 pt-1 text-xs text-slate-300">
+                  <input
+                    type="checkbox"
+                    id="termsCheck"
+                    checked={agreedToTerms}
+                    onChange={(e) => setAgreedToTerms(e.target.checked)}
+                    className="rounded border-slate-700 bg-slate-950 text-brand-500 focus:ring-0"
+                    required
+                  />
+                  <label htmlFor="termsCheck" className="cursor-pointer">
+                    I agree to the <span className="text-brand-400 underline">Terms of Service</span> & <span className="text-brand-400 underline">Privacy Policy</span>
+                  </label>
+                </div>
+
+                {registrationSuccess ? (
+                  <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 space-y-3 text-center animate-in zoom-in-95">
+                    <div className="w-10 h-10 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto">
+                      <CheckCircle2 className="w-6 h-6" />
+                    </div>
+                    <h3 className="text-sm font-bold text-emerald-300">Account created successfully</h3>
+                    <p className="text-xs text-slate-300">
+                      Your account is ready. Please log in with your credentials to access the portal.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMode('signin');
+                        setRegistrationSuccess(false);
+                        setErrorMsg('');
+                        setSuccessMsg('');
+                      }}
+                      className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black transition"
+                    >
+                      Continue to Login →
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className={`w-full py-3.5 rounded-xl text-white text-xs font-black transition flex items-center justify-center gap-2 ${currentConfig.buttonBg}`}
+                  >
+                    {loading ? (
+                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <>Create {role.toUpperCase()} Account →</>
+                    )}
+                  </button>
+                )}
               </form>
             )}
           </div>
@@ -610,36 +748,87 @@ export const LoginPage: React.FC = () => {
         StudIQ Digital Behaviour Intelligence Platform • Predict • Prevent • Perform
       </footer>
 
-      {/* FORGOT PASSWORD MODAL */}
+      {/* FORGOT & RESET PASSWORD MODAL */}
       {forgotModalOpen && (
-        <Modal title="Reset Password" isOpen={forgotModalOpen} onClose={() => setForgotModalOpen(false)}>
-          <div className="space-y-4">
-            <p className="text-xs text-slate-300">
-              Enter your registered email address or Student ID below. We will send a secure password reset link.
-            </p>
-            <input
-              type="text"
-              placeholder="e.g. STU-2026-001 or email@studiq.edu"
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white"
-            />
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                onClick={() => setForgotModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  setForgotModalOpen(false);
-                  setSuccessMsg('Reset password link sent to your email.');
-                }}
-                className="px-4 py-2 rounded-xl bg-brand-600 text-white text-xs font-bold"
-              >
-                Send Reset Link
-              </button>
-            </div>
-          </div>
+        <Modal title={resetStage === 'request' ? "Forgot Password" : "Reset Password"} isOpen={forgotModalOpen} onClose={() => { setForgotModalOpen(false); setResetStage('request'); }}>
+          {resetStage === 'request' ? (
+            <form onSubmit={handleForgotPassword} className="space-y-4">
+              <p className="text-xs text-slate-300">
+                Enter your registered email address below. We will send you password reset instructions.
+              </p>
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Email Address</label>
+                <input
+                  type="email"
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  placeholder="e.g. alex.mercer@studiq.edu"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white"
+                  required
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setForgotModalOpen(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold hover:bg-slate-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={forgotLoading}
+                  className="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-bold flex items-center gap-2"
+                >
+                  {forgotLoading ? <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : "Send Reset Link"}
+                </button>
+              </div>
+            </form>
+          ) : (
+            <form onSubmit={handleResetPassword} className="space-y-4">
+              <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs">
+                Check your email. We've sent instructions to reset your password.
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Reset Token</label>
+                <input
+                  type="text"
+                  value={resetToken}
+                  onChange={(e) => setResetToken(e.target.value)}
+                  placeholder="Paste reset token"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">New Password</label>
+                <input
+                  type="password"
+                  value={newResetPassword}
+                  onChange={(e) => setNewResetPassword(e.target.value)}
+                  placeholder="Enter new password (min. 6 characters)"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white"
+                  required
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => { setForgotModalOpen(false); setResetStage('request'); }}
+                  className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={forgotLoading}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-2"
+                >
+                  {forgotLoading ? <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : "Reset Password"}
+                </button>
+              </div>
+            </form>
+          )}
         </Modal>
       )}
     </div>

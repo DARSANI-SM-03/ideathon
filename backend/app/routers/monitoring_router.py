@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Body  # type: ignore
+from fastapi import APIRouter, Depends, HTTPException, Body, Request  # type: ignore
 from sqlalchemy.orm import Session  # type: ignore
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
@@ -110,9 +110,10 @@ def receive_agent_heartbeat(payload: Dict[str, Any] = Body(...), db: Session = D
 
 @router.post("/update")
 @router.post("/telemetry")
-def update_telemetry_from_agent(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+def update_telemetry_from_agent(request: Request, payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
     """
     Receives JSON telemetry updates from StudIQ Windows Desktop Agent.
+    Authoritatively resolves student_id from scoped agent_session JWT token if provided.
     Updates continuous entertainment tracker and stores activity log in database.
     """
     global last_agent_ping_time, last_telemetry_payload
@@ -120,6 +121,18 @@ def update_telemetry_from_agent(payload: Dict[str, Any] = Body(...), db: Session
     last_agent_ping_time = time.time()
 
     student_id = payload.get("student_id", 1)
+
+    # Security: Check for scoped agent JWT session token in payload or Authorization header
+    agent_token = payload.get("agent_token") or payload.get("token")
+    if not agent_token:
+        auth_hdr = request.headers.get("Authorization", "")
+        if auth_hdr.startswith("Bearer "):
+            agent_token = auth_hdr.split("Bearer ")[1].strip()
+
+    if agent_token:
+        decoded_claim = decode_agent_token(agent_token)
+        if decoded_claim and decoded_claim.get("student_id"):
+            student_id = int(decoded_claim["student_id"])
     app_name = payload.get("application_name", "Unknown Application")
     window_title = payload.get("window_title", "")
     website_url = payload.get("website_url", "")
