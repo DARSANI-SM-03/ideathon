@@ -1,3 +1,5 @@
+import { API_BASE_URL } from './api';
+
 export type ActivityCategory =
   | 'Educational'
   | 'Productive'
@@ -217,9 +219,10 @@ export class AgentBridgeService {
 
   public static async downloadInstaller(): Promise<void> {
     try {
+      const downloadUrl = `${API_BASE_URL}/monitoring/installer/download`;
       const link = document.createElement('a');
-      link.href = `${API_BASE_URL}/monitoring/installer/download`;
-      link.download = 'install_studiq_agent.bat';
+      link.href = downloadUrl;
+      link.setAttribute('download', 'StudIQAgentSetup.exe');
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);

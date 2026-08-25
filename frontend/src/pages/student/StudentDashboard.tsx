@@ -168,7 +168,7 @@ export const StudentDashboard: React.FC = () => {
       setAgentConnected(true);
       setShowBridgeModal(false);
     } else {
-      setAgentActionMessage('🔴 StudIQ Agent setup required. Click Download & Setup Agent to complete 1-click install.');
+      setAgentActionMessage('🔴 StudIQ Agent setup required. Click Set Up StudIQ Agent to complete 1-click install.');
       setAgentConnected(false);
       setShowBridgeModal(true);
     }
@@ -435,7 +435,7 @@ export const StudentDashboard: React.FC = () => {
                 <div className="space-y-2 text-[11px]">
                   <div className="flex items-center gap-2 p-2 rounded-lg bg-slate-900 border border-slate-800">
                     <span className="w-5 h-5 rounded-full bg-brand-500/20 text-brand-400 flex items-center justify-center font-bold font-mono text-[10px]">1</span>
-                    <span>Click <strong>Download & Setup Agent</strong> below.</span>
+                    <span>Click <strong>Set Up StudIQ Agent</strong> below.</span>
                   </div>
                   <div className="flex items-center gap-2 p-2 rounded-lg bg-slate-900 border border-slate-800">
                     <span className="w-5 h-5 rounded-full bg-brand-500/20 text-brand-400 flex items-center justify-center font-bold font-mono text-[10px]">2</span>
@@ -464,7 +464,7 @@ export const StudentDashboard: React.FC = () => {
                 className="px-5 py-2.5 rounded-xl bg-brand-500 hover:bg-brand-600 disabled:opacity-50 text-white text-xs font-bold transition shadow-lg shadow-brand-500/20 flex items-center gap-2"
               >
                 <Download className="w-4 h-4" />
-                {isDownloadingSetup ? 'Preparing Installer...' : 'Download & Setup Agent'}
+                {isDownloadingSetup ? 'Installing StudIQ Agent...' : 'Set Up StudIQ Agent'}
               </button>
               <button
                 onClick={() => setShowBridgeModal(false)}
@@ -567,7 +567,7 @@ export const StudentDashboard: React.FC = () => {
                 title="Download 1-Click Installer Setup"
               >
                 <Download className="w-4 h-4" />
-                {isDownloadingSetup ? 'Downloading...' : 'Setup Agent'}
+                {isDownloadingSetup ? 'Installing...' : 'Set Up Agent'}
               </button>
             </div>
           ) : (
