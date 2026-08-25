@@ -17,7 +17,7 @@ agent_installer_path = os.path.join(backend_path, "desktop_agent", "installer")
 if agent_installer_path not in sys.path:
     sys.path.insert(0, agent_installer_path)
 
-from drive_selector import (
+from desktop_agent.installer.drive_selector import (
     select_optimal_installation_path,
     simulate_drive_selection,
     get_windows_fixed_drives,

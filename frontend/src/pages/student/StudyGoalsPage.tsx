@@ -5,7 +5,18 @@ import { Modal } from '../../components/Modal';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../services/api';
 
-const DEFAULT_GOALS = [
+interface GoalItem {
+  id: number;
+  category: string;
+  title: string;
+  current: number;
+  target: number;
+  unit: string;
+  progress: number;
+  done: boolean;
+}
+
+const DEFAULT_GOALS: GoalItem[] = [
   { id: 1, category: 'Study Hours', title: 'Daily Productive Coding', current: 5, target: 6, unit: 'hrs', progress: 83, done: false },
   { id: 2, category: 'Assignments', title: 'CS302 ML Assignment #3', current: 1, target: 1, unit: 'task', progress: 100, done: true },
   { id: 3, category: 'Revision', title: 'Database Indexing Notes', current: 2, target: 3, unit: 'topics', progress: 66, done: false },
@@ -23,7 +34,7 @@ export const StudyGoalsPage: React.FC = () => {
   const [newTarget, setNewTarget] = useState(5);
   const [newUnit, setNewUnit] = useState('hrs');
 
-  const [goals, setGoals] = useState(() => {
+  const [goals, setGoals] = useState<GoalItem[]>(() => {
     try {
       const saved = localStorage.getItem(storageKey);
       if (saved) return JSON.parse(saved);

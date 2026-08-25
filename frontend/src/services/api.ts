@@ -2,7 +2,7 @@ import { StudentDashboardData, AdminDashboardData, ActivityLog } from '../types'
 import { EMPTY_STUDENT_DASHBOARD, EMPTY_ADMIN_DASHBOARD } from './mockData';
 
 const getApiBaseUrl = (): string => {
-  const envUrl = (import.meta.env.VITE_API_BASE_URL as string) || 'http://localhost:8000';
+  const envUrl = (import.meta.env?.VITE_API_BASE_URL as string) || 'http://localhost:8000';
   const clean = envUrl.trim().replace(/\/+$/, '');
   return clean.endsWith('/api/v1') ? clean : `${clean}/api/v1`;
 };
@@ -16,6 +16,71 @@ export class ApiService {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {})
     };
+  }
+
+  static async get(endpoint: string) {
+    try {
+      const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+      const res = await fetch(url, {
+        headers: this.getHeaders()
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn(`Backend connection error fetching ${endpoint}`, e);
+    }
+    return null;
+  }
+
+  static async post(endpoint: string, data?: any) {
+    try {
+      const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: data ? JSON.stringify(data) : undefined
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn(`Backend connection error posting to ${endpoint}`, e);
+    }
+    return null;
+  }
+
+  static async put(endpoint: string, data?: any) {
+    try {
+      const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+      const res = await fetch(url, {
+        method: 'PUT',
+        headers: this.getHeaders(),
+        body: data ? JSON.stringify(data) : undefined
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn(`Backend connection error putting to ${endpoint}`, e);
+    }
+    return null;
+  }
+
+  static async delete(endpoint: string) {
+    try {
+      const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+      const res = await fetch(url, {
+        method: 'DELETE',
+        headers: this.getHeaders()
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn(`Backend connection error deleting ${endpoint}`, e);
+    }
+    return null;
   }
 
   static async fetchStudentDashboard(studentId: string = 'STU-2026-001'): Promise<StudentDashboardData> {

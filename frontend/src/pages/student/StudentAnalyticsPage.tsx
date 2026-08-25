@@ -9,6 +9,12 @@ import { ApiService } from '../../services/api';
 
 export const StudentAnalyticsPage: React.FC = () => {
   const [weeklyData, setWeeklyData] = React.useState<any[]>([]);
+  const [monthlyData, setMonthlyData] = React.useState<any[]>([
+    { week: 'Week 1', focus: 82, assignments: 88 },
+    { week: 'Week 2', focus: 85, assignments: 92 },
+    { week: 'Week 3', focus: 87, assignments: 95 },
+    { week: 'Week 4', focus: 89, assignments: 94 },
+  ]);
   const [loading, setLoading] = React.useState<boolean>(true);
 
   React.useEffect(() => {
