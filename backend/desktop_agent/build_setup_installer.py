@@ -30,11 +30,10 @@ def build_setup_installer():
     installer_dir = os.path.join(agent_dir, "installer")
     payload_zip = os.path.join(installer_dir, "StudIQAgent.zip")
 
-    # 1. Ensure dist/StudIQAgent executable exists
-    if not os.path.exists(os.path.join(agent_dist_dir, "StudIQAgent.exe")):
-        print("[Build Setup] Building StudIQAgent executable first...")
-        import build_agent_exe
-        build_agent_exe.build()
+    # 1. Build StudIQAgent executable first to include all latest code edits
+    print("[Build Setup] Building fresh StudIQAgent executable...")
+    import build_agent_exe
+    build_agent_exe.build()
 
     # 2. Package dist/StudIQAgent into StudIQAgent.zip
     create_payload_zip(agent_dist_dir, payload_zip)

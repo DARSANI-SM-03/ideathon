@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['e:/ideathon/studiq-main/studiq-main/backend/desktop_agent/protocol_handler.py'],
+    ['E:/ideathon/studiq-main/studiq-main/backend/desktop_agent/protocol_handler.py'],
     pathex=[],
     binaries=[],
     datas=[],

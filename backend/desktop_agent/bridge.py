@@ -7,16 +7,19 @@ Enables the StudIQ Web Dashboard to securely check status, start, and stop the l
 import sys
 import os
 
-class NullWriter:
-    def write(self, s):
-        pass
-    def flush(self):
-        pass
+class DummyStream:
+    encoding = "utf-8"
+    errors = "ignore"
+    buffer = None
+    def write(self, s): pass
+    def flush(self): pass
+    def writable(self): return True
+    def isatty(self): return False
 
-if sys.stdout is None:
-    sys.stdout = NullWriter()
-if sys.stderr is None:
-    sys.stderr = NullWriter()
+if sys.stdout is None or not hasattr(sys.stdout, "write"):
+    sys.stdout = DummyStream()
+if sys.stderr is None or not hasattr(sys.stderr, "write"):
+    sys.stderr = DummyStream()
 
 import json
 import subprocess
@@ -43,7 +46,7 @@ ALLOWED_ORIGINS = {
 
 # Global Process Handle for spawned agent.py
 agent_process: Optional[subprocess.Popen] = None
-agent_process_lock = threading.Lock()
+agent_process_lock = threading.RLock()
 
 def get_script_dir() -> str:
     if getattr(sys, 'frozen', False):
@@ -55,107 +58,123 @@ def log_debug(msg: str):
         appdata = os.getenv("LOCALAPPDATA", get_script_dir())
         log_dir = os.path.join(appdata, "StudIQ")
         os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, "agent_debug.log")
-        with open(log_file, "a", encoding="utf-8") as f:
+        log_file = os.path.join(log_dir, "agent_execution.log")
+        with open(log_file, "a", encoding="utf-8", errors="ignore") as f:
             f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Bridge] {msg}\n")
+            f.flush()
     except Exception:
         pass
 
-def is_agent_running() -> bool:
-    global agent_process
-    with agent_process_lock:
-        if agent_process is None:
+def is_agent_lock_held() -> bool:
+    """Checks whether %LOCALAPPDATA%\\StudIQ\\agent.lock is currently locked by a running agent process."""
+    global agent_thread_running
+    if agent_thread_running:
+        return True
+    try:
+        appdata = os.getenv("LOCALAPPDATA", get_script_dir())
+        lock_file = os.path.join(appdata, "StudIQ", "agent.lock")
+        if not os.path.exists(lock_file):
             return False
-        poll = agent_process.poll()
-        if poll is None:
+        try:
+            with open(lock_file, "r+") as f:
+                if sys.platform == "win32":
+                    import msvcrt
+                    try:
+                        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                        return False
+                    except (IOError, OSError, PermissionError):
+                        return True
+        except (PermissionError, IOError, OSError):
             return True
-        else:
-            agent_process = None
-            return False
+    except Exception:
+        pass
+    return False
+
+agent_thread = None
+agent_thread_running = False
+
+def run_agent_worker(token="", backend_url="", student_id=0, student_code=""):
+    global agent_thread_running
+    agent_thread_running = True
+    log_debug(f"run_agent_worker thread started: student_id={student_id}, student_code={student_code}")
+    try:
+        if token:
+            os.environ["STUDIQ_AGENT_TOKEN"] = token
+        if backend_url:
+            os.environ["STUDIQ_BACKEND_URL"] = backend_url
+        if student_id:
+            os.environ["STUDIQ_STUDENT_ID"] = str(student_id)
+        if student_code:
+            os.environ["STUDIQ_STUDENT_CODE"] = str(student_code)
+
+        import agent
+        log_debug("Calling agent.main() from worker thread...")
+        agent.main()
+        log_debug("agent.main() finished execution.")
+    except Exception as e:
+        log_debug(f"[Agent Worker Exception] {e}")
+    finally:
+        agent_thread_running = False
+        log_debug("run_agent_worker thread exiting (agent_thread_running=False).")
+
+def is_agent_running() -> bool:
+    global agent_process, agent_thread, agent_thread_running
+    if agent_thread_running or (agent_thread and agent_thread.is_alive()):
+        return True
+    with agent_process_lock:
+        if agent_process is not None and agent_process.poll() is None:
+            return True
+    return is_agent_lock_held()
 
 def stop_agent_process() -> bool:
-    global agent_process
+    global agent_process, agent_thread_running
+    agent_thread_running = False
     with agent_process_lock:
-        if agent_process is None:
-            return True
-        try:
-            poll = agent_process.poll()
-            if poll is None:
-                agent_process.terminate()
-                try:
-                    agent_process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    agent_process.kill()
-            agent_process = None
-            return True
-        except Exception as e:
-            print(f"[Bridge Error] Failed to stop agent process: {e}")
-            agent_process = None
-            return False
+        if agent_process is not None:
+            try:
+                poll = agent_process.poll()
+                if poll is None:
+                    agent_process.terminate()
+                    try:
+                        agent_process.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        agent_process.kill()
+                agent_process = None
+            except Exception as e:
+                log_debug(f"[Bridge Error] Failed to stop agent process handle: {e}")
+                agent_process = None
+        return True
 
 def start_agent_process(backend_url: str = "", token: str = "", student_id: int = 1, student_code: str = "STU-2026-001") -> Dict[str, Any]:
-    global agent_process
+    global agent_process, agent_thread, agent_thread_running
     with agent_process_lock:
         if is_agent_running():
-            return {"status": "already_running", "pid": agent_process.pid}
+            pid = agent_process.pid if agent_process else os.getpid()
+            log_debug("start_agent_process called but agent is already running.")
+            return {"status": "already_running", "pid": pid}
 
-        if getattr(sys, 'frozen', False):
-            cmd = [sys.executable, "--run-agent"]
-        else:
-            agent_py = os.path.join(get_script_dir(), "agent.py")
-            if not os.path.exists(agent_py):
-                return {"status": "error", "message": f"agent.py not found at {agent_py}"}
-            cmd = [sys.executable, agent_py]
-
-        if backend_url:
-            cmd.extend(["--backend-url", backend_url])
-        if token:
-            cmd.extend(["--token", token])
-        if student_id:
-            cmd.extend(["--student-id", str(student_id)])
-        if student_code:
-            cmd.extend(["--student-code", str(student_code)])
-
-        env = os.environ.copy()
-        if backend_url:
-            env["STUDIQ_BACKEND_URL"] = backend_url
-        if token:
-            env["STUDIQ_AGENT_TOKEN"] = token
-        if student_id:
-            env["STUDIQ_STUDENT_ID"] = str(student_id)
-        if student_code:
-            env["STUDIQ_STUDENT_CODE"] = str(student_code)
-
-        log_debug(f"Spawning agent process: cmd={cmd}, cwd={get_script_dir()}")
-        try:
-            CREATE_NO_WINDOW = 0x08000000
-            CREATE_NEW_PROCESS_GROUP = 0x00000200
-            flags = (CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP) if sys.platform == "win32" else 0
-
-            agent_process = subprocess.Popen(
-                cmd,
-                cwd=get_script_dir(),
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=flags,
-                close_fds=True
-            )
-            log_debug(f"[Bridge] Started agent process with PID {agent_process.pid}")
-            return {"status": "started", "pid": agent_process.pid}
-        except Exception as e:
-            log_debug(f"[Bridge Error] Failed to launch agent process: {e}")
-            return {"status": "error", "message": str(e)}
+        agent_thread = threading.Thread(
+            target=run_agent_worker,
+            kwargs={
+                "token": token,
+                "backend_url": backend_url,
+                "student_id": student_id,
+                "student_code": student_code
+            },
+            daemon=True
+        )
+        agent_thread.start()
+        log_debug("Agent monitoring worker thread launched successfully.")
+        return {"status": "started", "message": "Monitoring agent startup initiated.", "pid": os.getpid()}
 
 class BridgeRequestHandler(BaseHTTPRequestHandler):
     def _send_cors_headers(self):
         origin = self.headers.get("Origin", "")
-        if origin in ALLOWED_ORIGINS:
+        if origin:
             self.send_header("Access-Control-Allow-Origin", origin)
         else:
-            # For local dev ease fallback to origin if present
-            self.send_header("Access-Control-Allow-Origin", origin if origin else "http://localhost:3000")
+            self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
@@ -173,6 +192,7 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0]
+        log_debug(f"HTTP GET {path}")
         if path in ("/status", "/health", "/"):
             running = is_agent_running()
             pid = agent_process.pid if (running and agent_process) else None
@@ -184,11 +204,13 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
                 "agent_pid": pid,
                 "platform": sys.platform
             })
+            log_debug(f"HTTP GET {path} response sent (running={running})")
         else:
             self._send_json_response(404, {"error": "Endpoint not found"})
 
     def do_POST(self):
         path = self.path.split("?")[0]
+        log_debug(f"HTTP POST {path}")
         content_length = int(self.headers.get("Content-Length", 0))
         body_data = {}
         if content_length > 0:
@@ -204,21 +226,15 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
             student_id = body_data.get("student_id", body_data.get("studentId", 1))
             student_code = body_data.get("student_code", body_data.get("studentCode", "STU-2026-001"))
 
-            if is_agent_running():
-                self._send_json_response(200, {"status": "already_running", "message": "Agent process is already active."})
-            else:
-                t = threading.Thread(
-                    target=start_agent_process,
-                    kwargs={
-                        "backend_url": backend_url,
-                        "token": token,
-                        "student_id": student_id,
-                        "student_code": student_code
-                    },
-                    daemon=True
-                )
-                t.start()
-                self._send_json_response(200, {"status": "started", "message": "Monitoring agent startup initiated."})
+            log_debug(f"Handling POST /start: token={token[:10]}..., backend_url={backend_url}, student_id={student_id}, student_code={student_code}")
+            res = start_agent_process(
+                backend_url=backend_url,
+                token=token,
+                student_id=student_id,
+                student_code=student_code
+            )
+            log_debug(f"POST /start result: {res}")
+            self._send_json_response(200, res)
 
         elif path == "/stop":
             success = stop_agent_process()
@@ -238,17 +254,28 @@ def main():
     print("   STUDIQ LOCAL WINDOWS DESKTOP AGENT BRIDGE v1.0")
     print(f"   Listening on http://{HOST}:{PORT} (Localhost Only)")
     print("==========================================================")
-    try:
-        server = ReusableThreadingHTTPServer((HOST, PORT), BridgeRequestHandler)
-        server.serve_forever()
-    except OSError as e:
-        log_debug(f"[Bridge Single Instance] Port {PORT} is already bound. Bridge daemon is already active: {e}")
-        sys.exit(0)
-    except KeyboardInterrupt:
-        print("\n[Bridge Shutting Down] Stopping bridge and active agent...")
-        stop_agent_process()
-    except Exception as e:
-        log_debug(f"[Bridge Crash Error] {e}")
+    server = None
+    for attempt in range(10):
+        try:
+            server = ReusableThreadingHTTPServer((HOST, PORT), BridgeRequestHandler)
+            log_debug(f"Bridge HTTP server successfully initialized on http://{HOST}:{PORT}")
+            break
+        except OSError as e:
+            if attempt < 9:
+                log_debug(f"[Bridge Bind Retry {attempt+1}/10] Port {PORT} busy/release pending: {e}")
+                time.sleep(0.5)
+            else:
+                log_debug(f"[Bridge Single Instance] Port {PORT} is bound by active bridge daemon: {e}")
+                sys.exit(0)
+
+    if server:
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            print("\n[Bridge Shutting Down] Stopping bridge and active agent...")
+            stop_agent_process()
+        except Exception as e:
+            log_debug(f"[Bridge Crash Error] {e}")
 
 if __name__ == "__main__":
     main()

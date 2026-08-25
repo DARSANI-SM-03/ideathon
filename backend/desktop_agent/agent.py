@@ -2,16 +2,19 @@ import time
 import sys
 import os
 
-class NullWriter:
-    def write(self, s):
-        pass
-    def flush(self):
-        pass
+class DummyStream:
+    encoding = "utf-8"
+    errors = "ignore"
+    buffer = None
+    def write(self, s): pass
+    def flush(self): pass
+    def writable(self): return True
+    def isatty(self): return False
 
-if sys.stdout is None:
-    sys.stdout = NullWriter()
-if sys.stderr is None:
-    sys.stderr = NullWriter()
+if sys.stdout is None or not hasattr(sys.stdout, "write"):
+    sys.stdout = DummyStream()
+if sys.stderr is None or not hasattr(sys.stderr, "write"):
+    sys.stderr = DummyStream()
 import threading
 from config import AgentConfig
 from collector import SystemActivityCollector
@@ -109,9 +112,10 @@ def log_debug(msg: str):
         appdata = os.getenv("LOCALAPPDATA", get_script_dir())
         log_dir = os.path.join(appdata, "StudIQ")
         os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, "agent_debug.log")
-        with open(log_file, "a", encoding="utf-8") as f:
+        log_file = os.path.join(log_dir, "agent_execution.log")
+        with open(log_file, "a", encoding="utf-8", errors="ignore") as f:
             f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Agent] {msg}\n")
+            f.flush()
     except Exception:
         pass
 
@@ -129,12 +133,14 @@ def acquire_single_instance_lock():
             import msvcrt
             msvcrt.locking(single_instance_lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
         return True
-    except (IOError, OSError):
-        log_debug("[Agent Single Instance] Another agent monitoring process is already running. Exiting duplicate instance.")
-        sys.exit(0)
+    except Exception as e:
+        log_debug(f"[Agent Single Instance] Lock check note: {e}")
+        return False
 
 def main():
-    acquire_single_instance_lock()
+    if not acquire_single_instance_lock():
+        log_debug("[Agent Single Instance] Single instance lock held by existing monitoring loop. Worker thread skipping duplicate loop.")
+        return
     log_debug("agent.py main() started with single instance lock.")
     import argparse
     parser = argparse.ArgumentParser(description="StudIQ Windows Desktop Monitoring Agent")
@@ -233,7 +239,7 @@ def main():
 
     except KeyboardInterrupt:
         print("\n[Agent Shutting Down] Desktop Monitoring Service stopped gracefully.")
-        sys.exit(0)
+        return
 
 if __name__ == "__main__":
     main()

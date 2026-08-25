@@ -10,11 +10,12 @@ try:
     import win32api
     IS_WINDOWS = True
 except ImportError:
-    try:
-        import ctypes
-        IS_WINDOWS = sys.platform.startswith('win')
-    except Exception:
-        IS_WINDOWS = False
+    IS_WINDOWS = sys.platform.startswith('win')
+
+if IS_WINDOWS:
+    import ctypes
+    class LASTINPUTINFO(ctypes.Structure):
+        _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
 
 class SystemActivityCollector:
     def __init__(self):
@@ -24,9 +25,6 @@ class SystemActivityCollector:
         """Calculates system idle time (time since last mouse/keyboard input) using Windows API."""
         if IS_WINDOWS:
             try:
-                class LASTINPUTINFO(ctypes.Structure):
-                    _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
-
                 lii = LASTINPUTINFO()
                 lii.cbSize = ctypes.sizeof(LASTINPUTINFO)
                 if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
@@ -49,10 +47,18 @@ class SystemActivityCollector:
                     windowTitle = win32gui.GetWindowText(hwnd) or "Active Desktop Session"
                     _, pid = win32process.GetWindowThreadProcessId(hwnd)
                     try:
-                        proc = psutil.Process(pid)
-                        appName = proc.name()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        appName = "System Window"
+                        import win32process, win32api, win32con
+                        handle = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid)
+                        if handle:
+                            exe_path = win32process.GetModuleFileNameEx(handle, 0)
+                            appName = os.path.basename(exe_path)
+                            win32api.CloseHandle(handle)
+                    except Exception:
+                        try:
+                            proc = psutil.Process(pid)
+                            appName = proc.name()
+                        except Exception:
+                            appName = "System Window"
             except Exception:
                 pass
         else:
@@ -83,15 +89,30 @@ class SystemActivityCollector:
         }
 
     def get_running_applications(self) -> List[str]:
-        """Lists active running user applications."""
+        """Lists active running top-level user applications (<1ms using EnumWindows)."""
         running = set()
-        try:
-            for p in psutil.process_iter(['name']):
-                name = p.info.get('name')
-                if name and not name.lower().startswith(('svchost', 'system', 'conhost', 'runtimebroker')):
-                    running.add(name)
-        except Exception:
-            pass
+        if IS_WINDOWS:
+            try:
+                import win32gui, win32process, win32api, win32con, os
+                def enum_windows_callback(hwnd, extra):
+                    if win32gui.IsWindowVisible(hwnd):
+                        title = win32gui.GetWindowText(hwnd)
+                        if title and len(title) > 2:
+                            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                            try:
+                                handle = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid)
+                                if handle:
+                                    exe_path = win32process.GetModuleFileNameEx(handle, 0)
+                                    appName = os.path.basename(exe_path)
+                                    if appName and not appName.lower().startswith(('svchost', 'system', 'conhost', 'explorer')):
+                                        running.add(appName)
+                                    win32api.CloseHandle(handle)
+                            except Exception:
+                                pass
+                    return True
+                win32gui.EnumWindows(enum_windows_callback, None)
+            except Exception:
+                pass
         return sorted(list(running))[:20]
 
     def collect_telemetry_snapshot(self) -> Dict[str, Any]:

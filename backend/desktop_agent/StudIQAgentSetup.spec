@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['e:/ideathon/studiq-main/studiq-main/backend/desktop_agent/installer/setup_entry.py'],
+    ['E:/ideathon/studiq-main/studiq-main/backend/desktop_agent/installer/setup_entry.py'],
     pathex=[],
     binaries=[],
-    datas=[('e:/ideathon/studiq-main/studiq-main/backend/desktop_agent/installer/StudIQAgent.zip', '.'), ('e:/ideathon/studiq-main/studiq-main/backend/desktop_agent/installer/drive_selector.py', '.')],
+    datas=[('E:/ideathon/studiq-main/studiq-main/backend/desktop_agent/installer/StudIQAgent.zip', '.'), ('E:/ideathon/studiq-main/studiq-main/backend/desktop_agent/installer/drive_selector.py', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

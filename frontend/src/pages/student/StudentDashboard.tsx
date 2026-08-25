@@ -82,6 +82,7 @@ interface CurrentActivityData {
 export type AgentSystemState =
   | 'NOT_INSTALLED'          // Agent bridge on 127.0.0.1:8765 is offline
   | 'INSTALLING'             // User clicked Set Up Agent, setup installer running
+  | 'CONNECTING'             // Attempting auto-launch / bridge connection
   | 'INSTALLED_NOT_RUNNING'  // Agent installed, but bridge daemon not running
   | 'RUNNING'                // Agent bridge daemon on 127.0.0.1:8765 active, ready for monitoring
   | 'MONITORING_ACTIVE'      // Telemetry active & streaming focus scores
@@ -137,73 +138,78 @@ export const StudentDashboard: React.FC = () => {
     return false;
   };
 
-  const handleStartAgent = async () => {
-    setIsAgentStarting(true);
-    setAgentActionMessage(null);
-
-    // Rule: Start Monitoring MUST NEVER launch StudIQAgentSetup.exe or open setup modal!
-    
-    // 1. Fetch scoped session token from backend
-    let agentToken = '';
-    let studentId = user?.id || 1;
-    let studentCode = user?.user_identifier || 'STU-2026-001';
-
-    try {
-      const tokenRes = await fetch(`${API_BASE_URL}/monitoring/agent/session`, {
-        method: 'POST',
-        headers: ApiService.getHeaders()
-      });
-      if (tokenRes.ok) {
-        const tokenData = await tokenRes.json();
-        agentToken = tokenData.agent_token || '';
-        studentId = tokenData.student_id || studentId;
-        studentCode = tokenData.student_code || studentCode;
-      }
-    } catch (e) {
-      console.warn('Error fetching agent session token:', e);
-    }
-
-    // 2. Check if local bridge is ALREADY active on 127.0.0.1:8765
+  const handleAutoConnectAndStartMonitoring = async (isAutoLaunchAllowed: boolean = true): Promise<boolean> => {
+    // 1. Check if local bridge is ALREADY active on 127.0.0.1:8765
     let bridgeStatus = await AgentBridgeService.checkBridgeStatus();
     if (bridgeStatus && (bridgeStatus.bridge_status === 'active' || bridgeStatus.agent_running || (bridgeStatus as any).running)) {
+      let agentToken = '';
+      let studentId = user?.id || 1;
+      let studentCode = user?.user_identifier || 'STU-2026-001';
+
+      try {
+        const tokenRes = await fetch(`${API_BASE_URL}/monitoring/agent/session`, {
+          method: 'POST',
+          headers: ApiService.getHeaders()
+        });
+        if (tokenRes.ok) {
+          const tokenData = await tokenRes.json();
+          agentToken = tokenData.agent_token || '';
+          studentId = tokenData.student_id || studentId;
+          studentCode = tokenData.student_code || studentCode;
+        }
+      } catch (e) {}
+
       await AgentBridgeService.startAgent(agentToken, API_BASE_URL, studentId, studentCode);
       setAgentSystemState('MONITORING_ACTIVE');
       setAgentConnected(true);
-      setAgentActionMessage('🟢 StudIQ Agent Connected & Monitoring Active!');
-      setIsAgentStarting(false);
-      setShowBridgeModal(false);
-      return;
+      return true;
     }
 
-    // 3. Bridge not responding — attempt to launch existing installed agent via protocol studiq-agent://start
-    setAgentActionMessage('🟡 Attempting to start local StudIQ Agent...');
-    invokeAgentProtocol('start', {
-      token: agentToken,
-      backend_url: API_BASE_URL,
-      student_id: String(studentId),
-      student_code: studentCode
-    });
+    // 2. Bridge not responding — attempt to launch existing installed agent via protocol studiq-agent://start
+    if (isAutoLaunchAllowed) {
+      setAgentSystemState('CONNECTING');
+      invokeAgentProtocol('start', {
+        backend_url: API_BASE_URL,
+        student_id: String(user?.id || 1),
+        student_code: user?.user_identifier || 'STU-2026-001'
+      });
 
-    // 4. Poll for active bridge connection for up to 5 seconds
-    const activeBridge = await AgentBridgeService.pollForBridgeActive(5000, 500);
-    if (activeBridge) {
-      await AgentBridgeService.startAgent(agentToken, API_BASE_URL, studentId, studentCode);
-      setAgentSystemState('MONITORING_ACTIVE');
-      setAgentConnected(true);
-      setAgentActionMessage('🟢 StudIQ Agent Connected & Monitoring Active!');
-      setShowBridgeModal(false);
-    } else {
-      // Do NOT trigger setup download or open setup modal on Start Monitoring failure
-      setAgentSystemState('INSTALLED_NOT_RUNNING');
-      setAgentActionMessage('🔴 Unable to connect to local agent on port 8765. Click Set Up Agent if not installed.');
+      const activeBridge = await AgentBridgeService.pollForBridgeActive(5000, 500);
+      if (activeBridge) {
+        let agentToken = '';
+        let studentId = user?.id || 1;
+        let studentCode = user?.user_identifier || 'STU-2026-001';
+
+        try {
+          const tokenRes = await fetch(`${API_BASE_URL}/monitoring/agent/session`, {
+            method: 'POST',
+            headers: ApiService.getHeaders()
+          });
+          if (tokenRes.ok) {
+            const tokenData = await tokenRes.json();
+            agentToken = tokenData.agent_token || '';
+            studentId = tokenData.student_id || studentId;
+            studentCode = tokenData.student_code || studentCode;
+          }
+        } catch (e) {}
+
+        await AgentBridgeService.startAgent(agentToken, API_BASE_URL, studentId, studentCode);
+        setAgentSystemState('MONITORING_ACTIVE');
+        setAgentConnected(true);
+        return true;
+      }
     }
-    setIsAgentStarting(false);
+
+    // 3. Fallback: Executable not present or recovery failed
+    setAgentSystemState('NOT_INSTALLED');
+    setAgentConnected(false);
+    return false;
   };
 
   const handleDownloadAndSetupAgent = async () => {
     setIsDownloadingSetup(true);
     setAgentSystemState('INSTALLING');
-    setAgentActionMessage('⬇️ Downloaded StudIQAgentSetup.exe. Please double-click to run setup.');
+    setAgentActionMessage(null);
     await AgentBridgeService.downloadInstaller();
 
     let agentToken = '';
@@ -222,17 +228,15 @@ export const StudentDashboard: React.FC = () => {
       }
     } catch (e) {}
 
-    // Poll for bridge coming online after user runs setup
+    // Poll continuously for bridge coming online after user runs setup
     const activeBridge = await AgentBridgeService.pollForBridgeActive(60000, 1000);
     if (activeBridge) {
       await AgentBridgeService.startAgent(agentToken, API_BASE_URL, studentId, studentCode);
       setAgentSystemState('MONITORING_ACTIVE');
       setAgentConnected(true);
-      setAgentActionMessage('🟢 StudIQ Agent Connected & Setup Complete!');
       setShowBridgeModal(false);
     } else {
       setAgentSystemState('NOT_INSTALLED');
-      setAgentActionMessage('🔴 Agent setup pending. Please run the downloaded StudIQAgentSetup.exe installer.');
     }
     setIsDownloadingSetup(false);
   };
@@ -242,10 +246,8 @@ export const StudentDashboard: React.FC = () => {
     setAgentActionMessage(null);
     setAgentSystemState('STOPPED_BY_USER');
     try {
-      // Dispatch protocol stop and HTTP bridge stop
       invokeAgentProtocol('stop');
       await AgentBridgeService.stopAgent();
-      
       setAgentActionMessage('🔴 Monitoring Stopped.');
       setAgentConnected(false);
     } catch (err) {
@@ -254,7 +256,6 @@ export const StudentDashboard: React.FC = () => {
       setIsAgentStopping(false);
     }
   };
-
 
   // Entertainment duration tracking & popup state
   const [entertainmentStatus, setEntertainmentStatus] = useState<EntertainmentStatus>({
@@ -331,27 +332,49 @@ export const StudentDashboard: React.FC = () => {
       })
       .catch(() => {});
 
-    // Initial immediate check of local agent connection
-    checkAgentConnection().then(isConnected => {
-      setAgentConnected(isConnected);
-      if (isConnected) {
-        setAgentSystemState(prev => prev === 'MONITORING_ACTIVE' || prev === 'STOPPED_BY_USER' ? prev : 'RUNNING');
-        setShowBridgeModal(false);
-      } else {
-        setAgentSystemState(prev => prev === 'INSTALLING' ? prev : 'NOT_INSTALLED');
-      }
-    });
+    // Initial immediate check & auto-connect sequence
+    handleAutoConnectAndStartMonitoring(true);
 
     // 3-second live polling loop
     const pollInterval = setInterval(async () => {
       // 1. Poll Agent Connection Status (local bridge priority)
       const isConnected = await checkAgentConnection();
       setAgentConnected(isConnected);
+
       if (isConnected) {
-        setAgentSystemState(prev => prev === 'MONITORING_ACTIVE' || prev === 'STOPPED_BY_USER' ? prev : 'RUNNING');
-        setShowBridgeModal(false);
+        setAgentSystemState((prev) => {
+          if (prev === 'INSTALLING' || prev === 'NOT_INSTALLED' || prev === 'CONNECTING') {
+            let agentToken = '';
+            let studentId = user?.id || 1;
+            let studentCode = user?.user_identifier || 'STU-2026-001';
+            fetch(`${API_BASE_URL}/monitoring/agent/session`, {
+              method: 'POST',
+              headers: ApiService.getHeaders()
+            })
+              .then((r) => r.json())
+              .then((tokenData) => {
+                agentToken = tokenData.agent_token || '';
+                studentId = tokenData.student_id || studentId;
+                studentCode = tokenData.student_code || studentCode;
+                AgentBridgeService.startAgent(agentToken, API_BASE_URL, studentId, studentCode);
+              })
+              .catch(() => {
+                AgentBridgeService.startAgent('', API_BASE_URL, studentId, studentCode);
+              });
+            return 'MONITORING_ACTIVE';
+          }
+          return prev;
+        });
       } else {
-        setAgentSystemState(prev => (prev === 'STOPPED_BY_USER' || prev === 'INSTALLING') ? prev : 'NOT_INSTALLED');
+        setAgentSystemState((prev) => {
+          if (prev === 'MONITORING_ACTIVE') {
+            handleAutoConnectAndStartMonitoring(true);
+            return 'CONNECTING';
+          }
+          if (prev === 'CONNECTING') return 'CONNECTING';
+          if (prev === 'INSTALLING') return 'INSTALLING';
+          return 'NOT_INSTALLED';
+        });
       }
 
       // 2. Poll Current Monitored Activity
@@ -586,41 +609,43 @@ export const StudentDashboard: React.FC = () => {
           <div className={`w-11 h-11 rounded-xl flex items-center justify-center font-bold shrink-0 border ${
             agentSystemState === 'MONITORING_ACTIVE' || agentSystemState === 'RUNNING'
               ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-              : agentSystemState === 'STOPPED_BY_USER'
-              ? 'bg-rose-500/10 border-rose-500/30 text-rose-400'
               : agentSystemState === 'INSTALLING'
               ? 'bg-blue-500/10 border-blue-500/30 text-blue-400'
+              : agentSystemState === 'CONNECTING'
+              ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
               : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
           }`}>
             <Activity className="w-6 h-6" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-black text-white">Study Monitoring Agent</h2>
+              <h2 className="text-base font-black text-white">StudIQ Desktop Agent</h2>
               <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold border ${
-                agentSystemState === 'MONITORING_ACTIVE'
+                agentSystemState === 'MONITORING_ACTIVE' || agentSystemState === 'RUNNING'
                   ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                  : agentSystemState === 'RUNNING'
-                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                  : agentSystemState === 'STOPPED_BY_USER'
-                  ? 'bg-rose-500/10 text-rose-400 border-rose-500/30'
                   : agentSystemState === 'INSTALLING'
                   ? 'bg-blue-500/10 text-blue-400 border-blue-500/30'
+                  : agentSystemState === 'CONNECTING'
+                  ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
                   : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
               }`}>
-                {agentSystemState === 'MONITORING_ACTIVE'
+                {agentSystemState === 'MONITORING_ACTIVE' || agentSystemState === 'RUNNING'
                   ? '🟢 Monitoring Active'
-                  : agentSystemState === 'RUNNING'
-                  ? '🟢 Agent Ready'
-                  : agentSystemState === 'STOPPED_BY_USER'
-                  ? '🔴 Monitoring Stopped'
                   : agentSystemState === 'INSTALLING'
-                  ? '🔵 Installing Agent...'
-                  : '🟠 Setup Required'}
+                  ? '🔵 Installing StudIQ Agent...'
+                  : agentSystemState === 'CONNECTING'
+                  ? '🟡 Connecting to StudIQ Agent...'
+                  : '🟠 Agent Setup Required'}
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-1 max-w-2xl leading-relaxed">
-              StudIQ's desktop agent monitors active study process window titles on this Windows device to compute Focus Scores and Burnout Risk.
+              {agentSystemState === 'MONITORING_ACTIVE' || agentSystemState === 'RUNNING'
+                ? 'StudIQ is monitoring your study activity.'
+                : agentSystemState === 'INSTALLING'
+                ? 'Please wait. StudIQ will automatically start monitoring when setup is complete.'
+                : agentSystemState === 'CONNECTING'
+                ? 'Please wait.'
+                : 'StudIQ needs its desktop agent to begin monitoring.'}
             </p>
             {agentActionMessage && (
               <div className="mt-2 text-xs font-mono text-emerald-400 animate-in fade-in duration-150">
@@ -630,57 +655,40 @@ export const StudentDashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-3 shrink-0">
-          {agentSystemState === 'MONITORING_ACTIVE' ? (
-            <button
-              onClick={handleStopAgent}
-              disabled={isAgentStopping}
-              className="px-5 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 disabled:opacity-50 text-rose-400 text-xs font-bold flex items-center gap-2 transition"
-            >
-              <Square className="w-4 h-4 fill-rose-400" />
-              {isAgentStopping ? 'Stopping...' : 'Stop Monitoring'}
-            </button>
-          ) : agentSystemState === 'RUNNING' ? (
-            <button
-              onClick={handleStartAgent}
-              disabled={isAgentStarting}
-              className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-slate-950 text-xs font-bold flex items-center gap-2 transition shadow-lg shadow-emerald-500/20"
-            >
-              <Play className="w-4 h-4 fill-slate-950" />
-              {isAgentStarting ? 'Starting Agent...' : 'Start Monitoring'}
-            </button>
-          ) : (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleStartAgent}
-                disabled={isAgentStarting || agentSystemState === 'INSTALLING'}
-                className="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-slate-950 text-xs font-bold flex items-center gap-2 transition shadow-lg shadow-emerald-500/20"
-              >
-                <Play className="w-4 h-4 fill-slate-950" />
-                {isAgentStarting ? 'Starting Agent...' : 'Start Monitoring'}
-              </button>
-
+          <div className="flex items-center gap-3 shrink-0">
+            {agentSystemState === 'NOT_INSTALLED' && (
               <button
                 onClick={handleDownloadAndSetupAgent}
-                disabled={isDownloadingSetup || agentSystemState === 'INSTALLING'}
-                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-brand-400 text-xs font-bold border border-slate-700 flex items-center gap-2 transition"
+                disabled={isDownloadingSetup}
+                className="px-5 py-2.5 rounded-xl bg-brand-500 hover:bg-brand-600 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-2 transition shadow-lg shadow-brand-500/20"
                 title="Download StudIQ Desktop Agent Setup"
               >
                 <Download className="w-4 h-4" />
-                {isDownloadingSetup || agentSystemState === 'INSTALLING' ? 'Installing...' : 'Set Up Agent'}
+                {isDownloadingSetup ? 'Downloading Setup...' : 'Set Up StudIQ Agent'}
               </button>
-            </div>
-          )}
+            )}
 
-          <button
-            onClick={() => setShowBridgeModal(true)}
-            className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700 transition"
-            title="Desktop Agent Setup Help"
-          >
-            <HelpCircle className="w-4 h-4" />
-          </button>
+            {agentSystemState === 'INSTALLING' && (
+              <button
+                disabled
+                className="px-5 py-2.5 rounded-xl bg-slate-800 text-slate-400 text-xs font-bold border border-slate-700 flex items-center gap-2 cursor-not-allowed opacity-75"
+              >
+                <Download className="w-4 h-4 animate-bounce" />
+                Installing StudIQ Agent...
+              </button>
+            )}
+
+            {agentSystemState === 'CONNECTING' && (
+              <button
+                disabled
+                className="px-5 py-2.5 rounded-xl bg-slate-800 text-amber-400 text-xs font-bold border border-slate-700 flex items-center gap-2 cursor-not-allowed opacity-75"
+              >
+                <Activity className="w-4 h-4 animate-spin" />
+                Connecting to StudIQ Agent...
+              </button>
+            )}
+          </div>
         </div>
-      </div>
 
       {/* CURRENT MONITORED APPLICATION & WINDOW TITLE CARD */}
       <div className="glass-card rounded-2xl p-5 border border-brand-500/30 bg-brand-950/20 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">

@@ -75,23 +75,11 @@ def show_dialog(title: str, message: str, is_error: bool = False):
         log_setup(f"GUI Dialog fallback note: {e}")
 
 def gracefully_stop_running_agent():
-    log_setup("Detecting running StudIQAgent / bridge instances...")
-    # 1. Try HTTP /stop request to bridge daemon
-    try:
-        req = urllib.request.Request(f"{LOCAL_BRIDGE_URL}/stop", method="POST", data=b"{}")
-        with urllib.request.urlopen(req, timeout=0.5) as resp:
-            log_setup("[Shutdown] HTTP /stop sent successfully.")
-    except Exception as e:
-        log_setup(f"[Shutdown] HTTP /stop note: {e}")
-
-    time.sleep(0.3)
-
-    # 2. Terminate StudIQAgent.exe processes if still running
+    log_setup("Stopping running StudIQAgent / bridge instances...")
     try:
         subprocess.run(["taskkill", "/F", "/IM", "StudIQAgent.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception as e:
-        log_setup(f"[Shutdown] taskkill note: {e}")
-
+    except Exception:
+        pass
     time.sleep(0.3)
 
 def wait_for_file_lock_release(exe_path: str, max_retries: int = 10) -> bool:
@@ -133,30 +121,40 @@ def configure_autostart(exe_path: str):
         winreg.SetValueEx(key, "StudIQAgent", 0, winreg.REG_SZ, f'"{exe_path}" "studiq-agent://start"')
 
 def create_shortcuts(exe_path: str, install_dir: str):
-    log_setup("Creating Start Menu and Desktop shortcuts...")
-    ps_cmd = f"""
-    $WshShell = New-Object -ComObject WScript.Shell
-    $sm = [System.Environment]::GetFolderPath('Programs')
-    if ($sm) {{
-        $s1 = $WshShell.CreateShortcut((Join-Path $sm 'StudIQ Desktop Agent.lnk'))
-        $s1.TargetPath = '{exe_path}'
-        $s1.Arguments = 'studiq-agent://start'
-        $s1.WorkingDirectory = '{install_dir}'
-        $s1.Save()
-    }}
-    $dt = [System.Environment]::GetFolderPath('Desktop')
-    if ($dt) {{
-        $s2 = $WshShell.CreateShortcut((Join-Path $dt 'StudIQ Desktop Agent.lnk'))
-        $s2.TargetPath = '{exe_path}'
-        $s2.Arguments = 'studiq-agent://start'
-        $s2.WorkingDirectory = '{install_dir}'
-        $s2.Save()
-    }}
-    """
+    log_setup("Creating Start Menu and Desktop shortcuts via WScript...")
+    vbs_content = f'''
+Set WshShell = CreateObject("WScript.Shell")
+sm = WshShell.SpecialFolders("Programs")
+If sm <> "" Then
+    Set s1 = WshShell.CreateShortcut(sm & "\\StudIQ Desktop Agent.lnk")
+    s1.TargetPath = "{exe_path}"
+    s1.Arguments = "studiq-agent://start"
+    s1.WorkingDirectory = "{install_dir}"
+    s1.Save
+End If
+dt = WshShell.SpecialFolders("Desktop")
+If dt <> "" Then
+    Set s2 = WshShell.CreateShortcut(dt & "\\StudIQ Desktop Agent.lnk")
+    s2.TargetPath = "{exe_path}"
+    s2.Arguments = "studiq-agent://start"
+    s2.WorkingDirectory = "{install_dir}"
+    s2.Save
+End If
+'''
+    vbs_file = os.path.join(tempfile.gettempdir(), "studiq_shortcuts.vbs")
     try:
-        subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with open(vbs_file, "w", encoding="utf-8") as f:
+            f.write(vbs_content)
+        subprocess.run(["cscript", "//nologo", vbs_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+        log_setup("Shortcuts created successfully.")
     except Exception as e:
         log_setup(f"Shortcut creation note: {e}")
+    finally:
+        try:
+            if os.path.exists(vbs_file):
+                os.remove(vbs_file)
+        except Exception:
+            pass
 
 def create_uninstaller(install_dir: str):
     uninstall_bat = os.path.join(install_dir, "uninstall_studiq_agent.bat")
@@ -262,23 +260,14 @@ def main():
         create_shortcuts(exe_path, install_dir)
         create_uninstaller(install_dir)
 
-        # 5. Launch Background Monitoring Agent Daemon (Detached Process)
+        # 5. Launch Background Monitoring Agent Daemon (Independent Shell Process)
         log_setup("Launching StudIQAgent daemon process on 127.0.0.1:8765...")
-        CREATE_NO_WINDOW = 0x08000000
-        CREATE_NEW_PROCESS_GROUP = 0x00000200
-        DETACHED_PROCESS = 0x00000008
-        flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS
-
         try:
-            subprocess.Popen(
-                [exe_path, "--daemon"],
-                cwd=install_dir,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=flags,
-                close_fds=True
-            )
+            if sys.platform == "win32":
+                cmd_str = f'start "" "{exe_path}" --daemon'
+                subprocess.Popen(cmd_str, cwd=install_dir, shell=True)
+            else:
+                subprocess.Popen([exe_path, "--daemon"], cwd=install_dir, close_fds=True)
             log_setup("StudIQ Agent daemon launched successfully.")
         except Exception as e:
             log_setup(f"Error launching agent daemon: {e}")
@@ -289,7 +278,7 @@ def main():
         log_setup("==========================================================")
 
         show_dialog("StudIQ Setup Complete", f"StudIQ Desktop Agent was installed successfully!\n\nLocation: {install_dir}\nBackground monitoring is active.")
-        sys.exit(0)
+        os._exit(0)
 
     except Exception as e:
         err_msg = f"StudIQ Desktop Agent setup failed:\n{e}"
