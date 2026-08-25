@@ -23,8 +23,12 @@ import subprocess
 import signal
 import time
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from typing import Optional, Dict, Any
+
+class ReusableThreadingHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -235,7 +239,7 @@ def main():
     print(f"   Listening on http://{HOST}:{PORT} (Localhost Only)")
     print("==========================================================")
     try:
-        server = HTTPServer((HOST, PORT), BridgeRequestHandler)
+        server = ReusableThreadingHTTPServer((HOST, PORT), BridgeRequestHandler)
         server.serve_forever()
     except OSError as e:
         log_debug(f"[Bridge Single Instance] Port {PORT} is already bound. Bridge daemon is already active: {e}")

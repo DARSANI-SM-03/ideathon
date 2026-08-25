@@ -262,15 +262,24 @@ def main():
         create_shortcuts(exe_path, install_dir)
         create_uninstaller(install_dir)
 
-        # 5. Launch Background Monitoring Agent
-        log_setup("Launching StudIQAgent daemon process...")
+        # 5. Launch Background Monitoring Agent Daemon (Detached Process)
+        log_setup("Launching StudIQAgent daemon process on 127.0.0.1:8765...")
         CREATE_NO_WINDOW = 0x08000000
         CREATE_NEW_PROCESS_GROUP = 0x00000200
-        flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+        DETACHED_PROCESS = 0x00000008
+        flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS
 
         try:
-            subprocess.Popen([exe_path, "studiq-agent://start"], cwd=install_dir, creationflags=flags)
-            log_setup("StudIQ Agent process launched successfully.")
+            subprocess.Popen(
+                [exe_path, "--daemon"],
+                cwd=install_dir,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=flags,
+                close_fds=True
+            )
+            log_setup("StudIQ Agent daemon launched successfully.")
         except Exception as e:
             log_setup(f"Error launching agent daemon: {e}")
 
