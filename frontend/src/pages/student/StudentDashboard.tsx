@@ -312,12 +312,12 @@ export const StudentDashboard: React.FC = () => {
     });
 
     // Initial fetch of timeline & analytics
-    fetch(`${API_BASE_URL}/monitoring/timeline`)
+    fetch(`${API_BASE_URL}/monitoring/timeline`, { headers: ApiService.getHeaders() })
       .then(r => r.json())
       .then(res => setLiveTimeline(res.timeline || []))
       .catch(() => {});
 
-    fetch(`${API_BASE_URL}/monitoring/analytics`)
+    fetch(`${API_BASE_URL}/monitoring/analytics`, { headers: ApiService.getHeaders() })
       .then(r => r.json())
       .then(res => {
         if (Array.isArray(res) && res.length > 0) {
@@ -378,7 +378,7 @@ export const StudentDashboard: React.FC = () => {
       }
 
       // 2. Poll Current Monitored Activity
-      fetch(`${API_BASE_URL}/monitoring/current-activity`)
+      fetch(`${API_BASE_URL}/monitoring/current-activity`, { headers: ApiService.getHeaders() })
         .then(r => r.json())
         .then(res => {
           setCurrentActivity(res);
@@ -392,7 +392,7 @@ export const StudentDashboard: React.FC = () => {
 
 
       // 3. Poll Focus Score
-      fetch(`${API_BASE_URL}/monitoring/focus-score`)
+      fetch(`${API_BASE_URL}/monitoring/focus-score`, { headers: ApiService.getHeaders() })
         .then(r => r.json())
         .then(res => {
           if (res.focus_score !== undefined) setLiveFocusScore(res.focus_score);
@@ -401,7 +401,7 @@ export const StudentDashboard: React.FC = () => {
         .catch(() => {});
 
       // 4. Poll Burnout Risk
-      fetch(`${API_BASE_URL}/monitoring/burnout`)
+      fetch(`${API_BASE_URL}/monitoring/burnout`, { headers: ApiService.getHeaders() })
         .then(r => r.json())
         .then(res => {
           if (res.burnout_score !== undefined) setLiveBurnoutScore(res.burnout_score);
@@ -411,13 +411,13 @@ export const StudentDashboard: React.FC = () => {
         .catch(() => {});
 
       // 5. Poll Entertainment Status
-      fetch(`${API_BASE_URL}/monitoring/entertainment-status`)
+      fetch(`${API_BASE_URL}/monitoring/entertainment-status`, { headers: ApiService.getHeaders() })
         .then(r => r.json())
         .then(res => setEntertainmentStatus(res))
         .catch(() => {});
 
       // 6. Poll Timeline
-      fetch(`${API_BASE_URL}/monitoring/timeline`)
+      fetch(`${API_BASE_URL}/monitoring/timeline`, { headers: ApiService.getHeaders() })
         .then(r => r.json())
         .then(res => {
           if (res.timeline && res.timeline.length > 0) {

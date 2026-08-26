@@ -90,21 +90,77 @@ class SystemActivityCollector:
                 if hwnd:
                     rawWindowTitle = win32gui.GetWindowText(hwnd) or ""
                     _, pid = win32process.GetWindowThreadProcessId(hwnd)
-                    try:
-                        import win32process, win32api, win32con
-                        handle = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ, False, pid)
-                        if handle:
-                            exe_path = win32process.GetModuleFileNameEx(handle, 0)
-                            appName = os.path.basename(exe_path)
-                            win32api.CloseHandle(handle)
-                    except Exception:
+                    if pid > 0:
                         try:
-                            proc = psutil.Process(pid)
-                            appName = proc.name()
+                            import win32process, win32api
+                            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+                            handle = win32api.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+                            if handle:
+                                try:
+                                    exe_path = win32process.GetQueryFullProcessImageName(handle, 0)
+                                    appName = os.path.basename(exe_path)
+                                except Exception:
+                                    try:
+                                        exe_path = win32process.GetModuleFileNameEx(handle, 0)
+                                        appName = os.path.basename(exe_path)
+                                    except Exception:
+                                        pass
+                                win32api.CloseHandle(handle)
                         except Exception:
-                            appName = "System Window"
+                            pass
+
+                        if appName == "Unknown Application":
+                            try:
+                                proc = psutil.Process(pid)
+                                appName = proc.name()
+                            except Exception:
+                                pass
+
             except Exception:
                 pass
+
+            # Fallback 1: EnumWindows visible window search if GetForegroundWindow returned 0 or Unknown Application
+            if appName == "Unknown Application":
+                try:
+                    import win32gui, win32process
+                    def _enum_cb(h, acc):
+                        try:
+                            if win32gui.IsWindowVisible(h):
+                                t = win32gui.GetWindowText(h)
+                                if t and len(t) > 2 and not t.startswith(('Program Manager', 'Settings', 'Calculator', 'Default IME', 'MSCTFIME')):
+                                    _, p = win32process.GetWindowThreadProcessId(h)
+                                    try:
+                                        pr = psutil.Process(p)
+                                        pname = pr.name()
+                                        if pname and not pname.lower().startswith(('svchost', 'system', 'conhost', 'cmd', 'powershell', 'python')):
+                                            acc.append((pname, t))
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+                        return True
+                    visible_windows = []
+                    try:
+                        win32gui.EnumWindows(_enum_cb, visible_windows)
+                    except Exception:
+                        pass
+                    if visible_windows:
+                        appName, rawWindowTitle = visible_windows[0]
+                except Exception:
+                    pass
+
+            # Fallback 2: Scan active user processes via psutil
+            if appName == "Unknown Application":
+                target_apps = ["chrome.exe", "code.exe", "notepad.exe", "devenv.exe", "idea64.exe", "msedge.exe", "firefox.exe", "brave.exe", "excel.exe", "winword.exe"]
+                try:
+                    for proc in psutil.process_iter(['name']):
+                        pname = (proc.info['name'] or '').lower()
+                        if pname in target_apps:
+                            appName = proc.info['name']
+                            rawWindowTitle = f"Active {appName} Session"
+                            break
+                except Exception:
+                    pass
         else:
             appName = "code.exe"
             rawWindowTitle = "studiq - Visual Studio Code"

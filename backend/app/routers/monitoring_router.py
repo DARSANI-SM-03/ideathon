@@ -285,12 +285,30 @@ def get_desktop_agent_status(student_id: int = 1, db: Session = Depends(get_db))
 
 @router.get("/current-activity")
 def get_current_activity(
-    student_id: int = 1,
+    request: Request,
+    student_id: Optional[int] = None,
     current_user: Optional[dict] = Depends(get_current_user_optional),
     db: Session = Depends(get_db)
 ):
+    target_student_id = None
     if current_user and current_user.get("role") == "student":
-        student_id = current_user.get("user_id", student_id)
+        target_student_id = current_user.get("user_id") or current_user.get("id")
+
+    if not target_student_id:
+        auth_hdr = request.headers.get("Authorization", "")
+        if auth_hdr.startswith("Bearer "):
+            bearer_tok = auth_hdr.split("Bearer ")[1].strip()
+            agent_claim = decode_agent_token(bearer_tok)
+            if agent_claim and agent_claim.get("student_id"):
+                try:
+                    target_student_id = int(agent_claim["student_id"])
+                except (ValueError, TypeError):
+                    pass
+
+    if not target_student_id:
+        target_student_id = student_id if student_id is not None else 1
+
+    student_id = target_student_id
     import time
     from datetime import datetime, date
     from app.ai.behavior_intelligence_engine import behavior_intelligence_engine
@@ -323,7 +341,15 @@ def get_current_activity(
     idle_secs = 0
     sess_dur = 0
 
-    if last_telemetry_payload:
+    latest_log = db.query(ActivityLog).filter(ActivityLog.student_id == student_id).order_by(ActivityLog.timestamp.desc()).first()
+    if latest_log:
+        app_name = latest_log.application_name or app_name
+        window_title = latest_log.window_title or window_title
+        website_url = latest_log.website_url or website_url
+        category = latest_log.category or category
+        confidence = latest_log.confidence or confidence
+
+    if last_telemetry_payload and last_telemetry_payload.get("student_id") == student_id:
         app_name = last_telemetry_payload.get("application_name", app_name)
         window_title = last_telemetry_payload.get("window_title", window_title)
         website_url = last_telemetry_payload.get("website_url", website_url)
@@ -332,7 +358,6 @@ def get_current_activity(
         idle_secs = last_telemetry_payload.get("idle_seconds", 0)
         sess_dur = last_telemetry_payload.get("session_duration_seconds", sess_dur)
 
-    latest_log = db.query(ActivityLog).filter(ActivityLog.student_id == student_id).order_by(ActivityLog.timestamp.desc()).first()
     started_at = latest_log.timestamp.strftime("%H:%M:%S") if latest_log and latest_log.timestamp else "N/A"
 
     focus_res = central_metrics_engine.calculate_focus_index(db, student_id, 24.0)
