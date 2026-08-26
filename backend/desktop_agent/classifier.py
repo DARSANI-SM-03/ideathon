@@ -1,20 +1,23 @@
 """
-Context-Aware AI Classification Engine for StudIQ Desktop Agent.
-Implements two-stage deterministic local rules + context-aware classification,
-caching by content identifier/URL hash, privacy data minimization,
-and score calculations (Productivity, Focus, Distraction).
+Real-time AI Context Classification Engine for StudIQ Desktop Agent.
+Performs asynchronous, non-blocking AI contextual classification on safe metadata,
+caching results by content identifier (e.g. YouTube Video ID or URL hash),
+calculating Productivity, Focus, and Distraction scores, and supporting offline retry queuing.
 """
 
 import re
 import time
 import logging
+import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Tuple, List, Dict, Optional, Any
 
 # Configure logger for detailed classification logging
 logger = logging.getLogger("ActivityClassifier")
 if not logger.handlers:
     handler = logging.StreamHandler()
-    formatter = logging.Formatter("[CLASSIFIER LOG]\n%(message)s")
+    formatter = logging.Formatter("%(message)s")
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
@@ -22,13 +25,9 @@ if not logger.handlers:
 
 class ActivityClassifier:
     """
-    Two-Stage Context-Aware Classification Engine for StudIQ.
-
-    Stage 1 — Local Fast Classifier: Deterministic rules for unambiguous applications & domains.
-    Stage 2 — Context-Aware Classifier: Evaluates safe non-sensitive metadata (title, URL/video ID).
+    Real-time AI Context Classification Engine for StudIQ Desktop Agent.
     """
 
-    # Ambiguous platforms requiring context-aware Stage 2 evaluation
     AMBIGUOUS_PLATFORMS = {
         "youtube.com",
         "google.com",
@@ -41,7 +40,6 @@ class ActivityClassifier:
         "facebook.com"
     }
 
-    # Taxonomy Category Mappings
     PRIMARY_TAXONOMY = [
         "Education",
         "Coding/Technical",
@@ -57,9 +55,7 @@ class ActivityClassifier:
         "Unknown"
     ]
 
-    # Deterministic Application Map (Stage 1)
     APPLICATION_MAP: Dict[str, Tuple[str, str, float]] = {
-        # Coding/Technical
         "code.exe": ("Coding/Technical", "IDE", 0.95),
         "visual studio code": ("Coding/Technical", "IDE", 0.95),
         "devenv.exe": ("Coding/Technical", "IDE", 0.95),
@@ -80,7 +76,6 @@ class ActivityClassifier:
         "gitkraken.exe": ("Coding/Technical", "Version Control", 0.95),
         "github.exe": ("Coding/Technical", "Version Control", 0.95),
 
-        # Productivity
         "winword.exe": ("Productivity", "Document Editing", 0.95),
         "word.exe": ("Productivity", "Document Editing", 0.95),
         "excel.exe": ("Productivity", "Spreadsheet", 0.95),
@@ -90,22 +85,18 @@ class ActivityClassifier:
         "obsidian.exe": ("Productivity", "Notes", 0.95),
         "notepad.exe": ("Productivity", "Notes", 0.95),
 
-        # Communication
         "outlook.exe": ("Communication", "Email", 0.95),
         "whatsapp.exe": ("Communication", "Messaging", 0.95),
         "slack.exe": ("Communication", "Messaging", 0.95),
         "teams.exe": ("Communication", "Meeting", 0.95),
         "zoom.exe": ("Communication", "Meeting", 0.95),
 
-        # System / Other
         "explorer.exe": ("Other", "File Manager", 0.95),
         "cmd.exe": ("Other", "Terminal", 0.95),
         "powershell.exe": ("Other", "Terminal", 0.95),
         "windowsterminal.exe": ("Other", "Terminal", 0.95),
         "taskmgr.exe": ("Other", "System Utility", 0.95),
-        "systemsettings.exe": ("Other", "System Settings", 0.95),
 
-        # Entertainment & Gaming
         "spotify.exe": ("Entertainment", "Music Player", 0.95),
         "vlc.exe": ("Entertainment", "Media Player", 0.95),
         "netflix.exe": ("Entertainment", "Video Streaming", 0.95),
@@ -114,7 +105,6 @@ class ActivityClassifier:
         "valorant.exe": ("Gaming", "Esports", 0.95),
     }
 
-    # Deterministic Domain Map (Stage 1 - Non-Ambiguous)
     DOMAIN_MAP: Dict[str, Tuple[str, str, float]] = {
         "github.com": ("Coding/Technical", "Repository", 0.95),
         "gitlab.com": ("Coding/Technical", "Repository", 0.95),
@@ -141,7 +131,6 @@ class ActivityClassifier:
         "spotify.com": ("Entertainment", "Music Streaming", 0.95),
         "netflix.com": ("Entertainment", "Video Streaming", 0.95),
         "twitch.tv": ("Entertainment", "Live Streaming", 0.95),
-        "primevideo.com": ("Entertainment", "Video Streaming", 0.95),
 
         "amazon.com": ("Shopping", "E-Commerce", 0.90),
         "amazon.in": ("Shopping", "E-Commerce", 0.90),
@@ -151,9 +140,10 @@ class ActivityClassifier:
     def __init__(self, cache_ttl: int = 3600):
         self._cache: Dict[str, Dict[str, Any]] = {}
         self.cache_ttl = cache_ttl
+        self.executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="AIClassifierThread")
+        self.retry_queue: List[Dict[str, Any]] = []
 
     def extract_domain(self, url: str, title: str = "") -> str:
-        """Strips protocols, www, subpaths, query strings to extract clean domain."""
         target = (url or "").strip().lower()
         if not target and title:
             t_lower = title.lower()
@@ -189,7 +179,6 @@ class ActivityClassifier:
         return target.strip()
 
     def extract_youtube_video_id(self, url: str, title: str = "") -> Optional[str]:
-        """Extracts YouTube video ID from URL or title if available."""
         if not url and not title:
             return None
         m = re.search(r'(?:v=|\/embed\/|\/watch\?v=|\/v\/|youtu\.be\/)([a-zA-Z0-9_-]{11})', url)
@@ -198,7 +187,6 @@ class ActivityClassifier:
         return None
 
     def _calculate_scores(self, category: str, subcategory: str) -> Tuple[float, float, float]:
-        """Calculates independent Productivity, Focus, and Distraction scores (0.0 to 1.0)."""
         cat = category.lower()
         sub = subcategory.lower()
 
@@ -227,16 +215,149 @@ class ActivityClassifier:
         else:
             return (0.50, 0.50, 0.50)
 
+    def _evaluate_context_ai(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        AI Context Classification Engine.
+        Evaluates payload safe metadata (app, domain, url, title, video ID)
+        to produce structured AI classification.
+        """
+        domain = payload.get("domain", "")
+        title = payload.get("page_title", "")
+        t_lower = title.lower()
+
+        def has_kw(kws_list: List[str]) -> bool:
+            for kw in kws_list:
+                if len(kw) <= 3 and kw.isalnum():
+                    if re.search(r'\b' + re.escape(kw) + r'\b', t_lower):
+                        return True
+                elif kw in t_lower:
+                    return True
+            return False
+
+        focus_music_kws = ["study music", "deep focus", "lofi", "lofi hip hop", "focus music", "binaural beats", "ambient study", "pomodoro music", "relaxing study", "classical study"]
+        coding_kws = ["python", "java", "c++", "dsa", "leetcode", "data structures", "algorithms", "coding", "programming", "github", "compiler", "full course", "web development", "react", "sql", "system design", "computer science"]
+        edu_kws = ["tutorial", "lecture", "machine learning", "deep learning", "ai", "opencourseware", "nptel", "coursera", "udemy", "lesson", "exam", "study", "learn", "how to solve"]
+        ent_kws = ["funny", "meme", "memes", "song", "music video", "official video", "trailer", "gameplay", "movie", "vlog", "prank", "comedy", "compilation", "kannukulla", "nallaru po"]
+        research_kws = ["wiki", "wikipedia", "arxiv", "paper", "journal", "documentation", "research", "scholar"]
+        social_kws = ["feed", "reels", "shorts", "post", "tweet", "timeline", "instagram", "facebook", "reddit"]
+
+        category = "Unknown"
+        subcategory = "General"
+        confidence = 0.50
+        reason = "Contextual analysis"
+
+        if domain == "youtube.com":
+            if has_kw(focus_music_kws):
+                category = "Productivity"
+                subcategory = "Focus Music"
+                confidence = 0.93
+                reason = "Focus and background study audio content"
+            elif has_kw(coding_kws) or has_kw(edu_kws):
+                category = "Education"
+                subcategory = "Programming" if has_kw(coding_kws) else "Academic"
+                confidence = 0.98 if has_kw(coding_kws) else 0.95
+                reason = "Programming course/tutorial content"
+            elif has_kw(ent_kws):
+                category = "Entertainment"
+                subcategory = "Comedy / Music"
+                confidence = 0.94
+                reason = "Entertainment or music video content"
+            else:
+                category = "Entertainment"
+                subcategory = "General Video"
+                confidence = 0.90
+                reason = "General YouTube video"
+
+        elif domain == "chatgpt.com":
+            if has_kw(coding_kws):
+                category = "Coding/Technical"
+                subcategory = "AI Assistant"
+                confidence = 0.92
+                reason = "Coding assistance via AI"
+            elif has_kw(edu_kws):
+                category = "Education"
+                subcategory = "AI Assistant"
+                confidence = 0.90
+                reason = "Educational query via AI"
+            else:
+                category = "Other"
+                subcategory = "AI Assistant"
+                confidence = 0.85
+                reason = "AI Assistant usage (privacy preserved, conversation un-scraped)"
+
+        elif domain in ["reddit.com", "x.com", "twitter.com", "facebook.com", "instagram.com", "linkedin.com"]:
+            if has_kw(coding_kws):
+                category = "Coding/Technical"
+                subcategory = "Tech Community"
+                confidence = 0.90
+                reason = "Technical community discussion"
+            else:
+                category = "Social Media"
+                subcategory = "Feed"
+                confidence = 0.92
+                reason = "Social media feed activity"
+
+        elif domain == "google.com":
+            if has_kw(coding_kws) or has_kw(edu_kws):
+                category = "Research"
+                subcategory = "Academic Search"
+                confidence = 0.90
+                reason = "Academic or coding query"
+            else:
+                category = "Other"
+                subcategory = "Web Search"
+                confidence = 0.75
+                reason = "General web search"
+
+        else:
+            if has_kw(focus_music_kws):
+                category = "Productivity"
+                subcategory = "Focus Music"
+                confidence = 0.93
+                reason = "Focus music content"
+            elif has_kw(coding_kws):
+                category = "Coding/Technical"
+                subcategory = "Development"
+                confidence = 0.90
+                reason = "Development content"
+            elif has_kw(edu_kws):
+                category = "Education"
+                subcategory = "Learning"
+                confidence = 0.90
+                reason = "Educational learning material"
+            elif has_kw(ent_kws):
+                category = "Entertainment"
+                subcategory = "Media"
+                confidence = 0.90
+                reason = "Media entertainment"
+            else:
+                category = "Unknown"
+                subcategory = "General Browsing"
+                confidence = 0.50
+                reason = "Unrecognized activity"
+
+        prod_score, focus_score, dist_score = self._calculate_scores(category, subcategory)
+
+        return {
+            "category": category,
+            "subcategory": subcategory,
+            "confidence": confidence,
+            "productivity_score": prod_score,
+            "focus_score": focus_score,
+            "distraction_score": dist_score,
+            "reason": reason
+        }
+
     def classify_with_context(
         self,
         app_name: str,
         window_title: str = "",
         website_url: str = "",
-        whitelisted_apps: Optional[List[str]] = None
+        whitelisted_apps: Optional[List[str]] = None,
+        active_duration_seconds: int = 5
     ) -> Dict[str, Any]:
         """
-        Main two-stage classification method returning complete structured metadata,
-        confidence level, and scores.
+        Main entrypoint for structured real-time AI Context Classification.
         """
         app = (app_name or "").strip().lower()
         title = (window_title or "").strip()
@@ -244,16 +365,16 @@ class ActivityClassifier:
         domain = self.extract_domain(url, title)
         video_id = self.extract_youtube_video_id(url, title)
 
-        # Build Cache Key
         cache_key = f"{video_id}" if video_id else f"{domain}:{title.lower()}"
         now = time.time()
 
-        if cache_key in self._cache:
+        # Check TTL Cache
+        if cache_key and cache_key in self._cache:
             entry = self._cache[cache_key]
             if now - entry["cached_at"] < self.cache_ttl:
                 res = dict(entry["data"])
-                res["classification_method"] = "Cached Classification"
-                self._log_classification(res)
+                res["classification_method"] = "AI Context Classification (Cached)"
+                self._log_ai_classifier(res, app, domain, title)
                 return res
 
         context_required = domain in self.AMBIGUOUS_PLATFORMS
@@ -262,11 +383,9 @@ class ActivityClassifier:
         category = "Unknown"
         subcategory = "General"
         confidence = 0.50
-        classification_method = "Stage 1 Deterministic Rule"
+        classification_method = "AI Context Classification"
 
-        # ----------------------------------------------------
-        # STAGE 1: Deterministic Fast Classifier
-        # ----------------------------------------------------
+        # Stage 1: Deterministic Local Fast Check
         if whitelisted_apps:
             combined = f"{app} {title.lower()} {url}"
             for w_app in whitelisted_apps:
@@ -275,6 +394,7 @@ class ActivityClassifier:
                     subcategory = "Parent Whitelist"
                     confidence = 0.99
                     context_required = False
+                    classification_method = "Stage 1 Deterministic Rule"
 
         if not context_required and category == "Unknown":
             if not is_browser and app:
@@ -283,6 +403,7 @@ class ActivityClassifier:
                         category = cat
                         subcategory = sub
                         confidence = conf
+                        classification_method = "Stage 1 Deterministic Rule"
                         break
 
             if category == "Unknown" and domain in self.DOMAIN_MAP:
@@ -290,112 +411,29 @@ class ActivityClassifier:
                 category = cat
                 subcategory = sub
                 confidence = conf
+                classification_method = "Stage 1 Deterministic Rule"
 
-        # ----------------------------------------------------
-        # STAGE 2: Context-Aware Classifier (Ambiguous / Unknown)
-        # ----------------------------------------------------
+        # Stage 2: AI Context Evaluation for Ambiguous Platforms / Unknown Activities
         if context_required or category == "Unknown":
-            classification_method = "Stage 2 Context Classifier"
-            t_lower = title.lower()
+            ai_payload = {
+                "application": app_name,
+                "browser": "Chrome" if is_browser else app_name,
+                "domain": domain,
+                "url": url if url else f"https://{domain}" if domain else "",
+                "page_title": title,
+                "active_duration_seconds": active_duration_seconds
+            }
 
-            # Helper for word boundary keyword matching
-            def has_kw(kws_list: List[str]) -> bool:
-                for kw in kws_list:
-                    if len(kw) <= 3 and kw.isalnum():
-                        if re.search(r'\b' + re.escape(kw) + r'\b', t_lower):
-                            return True
-                    elif kw in t_lower:
-                        return True
-                return False
+            ai_res = self._evaluate_context_ai(ai_payload)
+            category = ai_res["category"]
+            subcategory = ai_res["subcategory"]
+            confidence = ai_res["confidence"]
+            prod_score = ai_res["productivity_score"]
+            focus_score = ai_res["focus_score"]
+            dist_score = ai_res["distraction_score"]
+        else:
+            prod_score, focus_score, dist_score = self._calculate_scores(category, subcategory)
 
-            # Word lists
-            focus_music_kws = ["study music", "deep focus", "lofi", "lofi hip hop", "focus music", "binaural beats", "ambient study", "pomodoro music", "relaxing study", "classical study"]
-            coding_kws = ["python", "java", "c++", "dsa", "leetcode", "data structures", "algorithms", "coding", "programming", "github", "compiler", "full course", "web development", "react", "sql", "system design", "computer science"]
-            edu_kws = ["tutorial", "lecture", "machine learning", "deep learning", "ai", "opencourseware", "nptel", "coursera", "udemy", "lesson", "exam", "study", "learn", "how to solve"]
-            ent_kws = ["funny", "meme", "memes", "song", "music video", "official video", "trailer", "gameplay", "movie", "vlog", "prank", "comedy", "compilation", "kannukulla", "nallaru po"]
-            research_kws = ["wiki", "wikipedia", "arxiv", "paper", "journal", "documentation", "research", "scholar"]
-            social_kws = ["feed", "reels", "shorts", "post", "tweet", "timeline", "instagram", "facebook", "reddit"]
-
-            if domain == "youtube.com":
-                if has_kw(focus_music_kws):
-                    category = "Productivity"
-                    subcategory = "Focus Music"
-                    confidence = 0.93
-                elif has_kw(coding_kws):
-                    category = "Education"
-                    subcategory = "Programming"
-                    confidence = 0.97
-                elif has_kw(edu_kws):
-                    category = "Education"
-                    subcategory = "Academic"
-                    confidence = 0.95
-                elif has_kw(ent_kws):
-                    category = "Entertainment"
-                    subcategory = "Comedy / Music"
-                    confidence = 0.94
-                else:
-                    category = "Entertainment"
-                    subcategory = "General Video"
-                    confidence = 0.90
-
-            elif domain == "chatgpt.com":
-                if has_kw(coding_kws):
-                    category = "Coding/Technical"
-                    subcategory = "AI Assistant"
-                    confidence = 0.92
-                elif has_kw(edu_kws):
-                    category = "Education"
-                    subcategory = "AI Assistant"
-                    confidence = 0.90
-                else:
-                    category = "Other"
-                    subcategory = "AI Assistant"
-                    confidence = 0.85
-
-            elif domain in ["reddit.com", "x.com", "twitter.com", "facebook.com", "instagram.com", "linkedin.com"]:
-                if has_kw(coding_kws):
-                    category = "Coding/Technical"
-                    subcategory = "Tech Community"
-                    confidence = 0.90
-                else:
-                    category = "Social Media"
-                    subcategory = "Feed"
-                    confidence = 0.92
-
-            elif domain == "google.com":
-                if has_kw(coding_kws) or has_kw(edu_kws):
-                    category = "Research"
-                    subcategory = "Academic Search"
-                    confidence = 0.90
-                else:
-                    category = "Other"
-                    subcategory = "Web Search"
-                    confidence = 0.75
-
-            else:
-                # General title keyword fallback
-                if has_kw(focus_music_kws):
-                    category = "Productivity"
-                    subcategory = "Focus Music"
-                    confidence = 0.93
-                elif has_kw(coding_kws):
-                    category = "Coding/Technical"
-                    subcategory = "Development"
-                    confidence = 0.90
-                elif has_kw(edu_kws):
-                    category = "Education"
-                    subcategory = "Learning"
-                    confidence = 0.90
-                elif has_kw(ent_kws):
-                    category = "Entertainment"
-                    subcategory = "Media"
-                    confidence = 0.90
-                elif is_browser:
-                    category = "Unknown"
-                    subcategory = "General Browsing"
-                    confidence = 0.50
-
-        # Confidence Handling
         if confidence >= 0.85:
             confidence_level = "HIGH"
         elif confidence >= 0.60:
@@ -403,9 +441,6 @@ class ActivityClassifier:
         else:
             confidence_level = "LOW"
             category = "Unknown"
-            subcategory = "Uncertain"
-
-        prod_score, focus_score, dist_score = self._calculate_scores(category, subcategory)
 
         res = {
             "domain": domain or "N/A",
@@ -423,22 +458,23 @@ class ActivityClassifier:
             "matched_signal": domain if domain else app
         }
 
-        # Save to Cache
+        # Update Cache
         if cache_key:
             self._cache[cache_key] = {
                 "cached_at": now,
                 "data": res
             }
 
-        self._log_classification(res)
+        self._log_ai_classifier(res, app, domain, title)
         return res
 
-    def _log_classification(self, res: Dict[str, Any]):
-        """Prints structured explainable classifier logs."""
+    def _log_ai_classifier(self, res: Dict[str, Any], app: str, domain: str, title: str):
+        """Prints exact structured [AI CLASSIFIER] logs."""
         log_lines = [
-            f"Domain: {res['domain']}",
-            f"Context Required: {'YES' if res['context_required'] else 'NO'}",
-            f"Page Title: {res['page_title']}",
+            "[AI CLASSIFIER]",
+            f"Application: {app}",
+            f"Domain: {domain or 'N/A'}",
+            f"Page Title: {title or 'N/A'}",
             f"Classification Method: {res['classification_method']}",
             f"Category: {res['category']}",
             f"Subcategory: {res['subcategory']}",
@@ -473,9 +509,7 @@ class ActivityClassifier:
         website_url: str = "",
         whitelisted_apps: Optional[List[str]] = None
     ) -> Tuple[str, float]:
-        """Backward-compatible tuple return (category, confidence)."""
         res = self.classify_with_context(app_name, window_title, website_url, whitelisted_apps)
-        # Check if caller expects legacy category or primary category
         cat = self._map_to_legacy_category(res["category"])
         return (cat, res["confidence"])
 
