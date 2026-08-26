@@ -91,6 +91,75 @@ def get_monitoring_health():
         "server_timestamp": time.time()
     }
 
+ACTIVE_AGENT_SESSIONS: Dict[int, Dict[str, Any]] = {}
+
+@router.post("/agent/session")
+def create_or_get_agent_session(
+    request: Request,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db)
+):
+    """
+    Generates and registers an agent telemetry session for the currently authenticated student.
+    Enables both local HTTP bridge and HTTPS cloud session sync.
+    """
+    import time
+    if not current_user:
+        auth_hdr = request.headers.get("Authorization", "")
+        if auth_hdr.startswith("Bearer "):
+            token_str = auth_hdr.split("Bearer ")[1].strip()
+            from app.auth.security import decode_access_token
+            payload = decode_access_token(token_str)
+            if payload and payload.get("user_id"):
+                user_id = int(payload.get("user_id"))
+                current_user = db.query(User).filter(User.id == user_id).first()
+
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required to establish agent session.")
+
+    student_id = current_user.id
+    student_code = getattr(current_user, "user_identifier", None) or f"STU-{student_id}"
+
+    from app.auth.security import create_agent_token
+    agent_token = create_agent_token({
+        "student_id": student_id,
+        "student_code": student_code,
+        "scope": "telemetry"
+    })
+
+    session_info = {
+        "status": "success",
+        "student_id": student_id,
+        "student_code": student_code,
+        "agent_token": agent_token,
+        "created_at": time.time()
+    }
+
+    ACTIVE_AGENT_SESSIONS[student_id] = session_info
+
+    print(f"[AGENT SESSION] Created session for Student ID {student_id} ({student_code})")
+    return session_info
+
+@router.get("/agent/active-session")
+def get_active_agent_session():
+    """
+    Allows desktop agent daemon to poll active cloud session if local bridge HTTP fetch is blocked by browser mixed-content.
+    Returns the latest active student session.
+    """
+    import time
+    if not ACTIVE_AGENT_SESSIONS:
+        return {"active": False}
+    latest_id = max(ACTIVE_AGENT_SESSIONS.keys(), key=lambda k: ACTIVE_AGENT_SESSIONS[k]["created_at"])
+    session_data = ACTIVE_AGENT_SESSIONS[latest_id]
+    if time.time() - session_data["created_at"] < 3600:
+        return {
+            "active": True,
+            "student_id": session_data["student_id"],
+            "student_code": session_data["student_code"],
+            "agent_token": session_data["agent_token"]
+        }
+    return {"active": False}
+
 @router.post("/agent/revoke-session")
 @router.post("/agent/logout")
 def revoke_agent_session(request: Request, payload: Optional[Dict[str, Any]] = Body(None)):
@@ -322,7 +391,10 @@ def get_desktop_agent_status(
                     pass
 
     if not target_student_id:
-        target_student_id = student_id if student_id is not None else 1
+        if student_id is not None:
+            target_student_id = student_id
+        else:
+            raise HTTPException(status_code=401, detail="Authentication required to view monitoring status.")
 
     student_id = target_student_id
 
@@ -400,7 +472,10 @@ def get_current_activity(
                     pass
 
     if not target_student_id:
-        target_student_id = student_id if student_id is not None else 1
+        if student_id is not None:
+            target_student_id = student_id
+        else:
+            raise HTTPException(status_code=401, detail="Authentication required to view current activity.")
 
     student_id = target_student_id
     import time

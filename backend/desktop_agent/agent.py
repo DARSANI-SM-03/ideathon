@@ -194,6 +194,21 @@ def main():
 
     try:
         while True:
+            if not os.getenv("STUDIQ_AGENT_TOKEN"):
+                try:
+                    b_url = os.getenv("STUDIQ_BACKEND_URL", "http://127.0.0.1:8000/api/v1/monitoring/telemetry")
+                    session_sync_url = b_url.rstrip("/").replace("/telemetry", "") + "/agent/active-session"
+                    s_res = requests.get(session_sync_url, timeout=2.0)
+                    if s_res.ok:
+                        s_data = s_res.json()
+                        if s_data.get("active") and s_data.get("agent_token"):
+                            os.environ["STUDIQ_AGENT_TOKEN"] = s_data["agent_token"]
+                            os.environ["STUDIQ_STUDENT_ID"] = str(s_data["student_id"])
+                            os.environ["STUDIQ_STUDENT_CODE"] = s_data["student_code"]
+                            print(f"[Agent Sync] Synced active session for Student ID {s_data['student_id']}")
+                except Exception:
+                    pass
+
             cur_student_id = int(os.getenv("STUDIQ_STUDENT_ID", str(student_id)))
             cur_student_code = os.getenv("STUDIQ_STUDENT_CODE", student_code)
 
