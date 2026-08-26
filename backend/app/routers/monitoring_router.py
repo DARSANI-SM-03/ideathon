@@ -478,16 +478,51 @@ def get_current_activity(
     current_user: Optional[dict] = Depends(get_current_user_optional),
     db: Session = Depends(get_db)
 ):
+    import time
+    from datetime import datetime, date
+    from app.models.user import Parent
+    from app.ai.behavior_intelligence_engine import behavior_intelligence_engine
+    from desktop_agent.classifier import ActivityClassifier
+
     target_student_id = None
     if current_user and current_user.get("role") == "student":
         target_student_id = current_user.get("user_id") or current_user.get("id")
+
+    # Parent Authorization & IDOR Protection Check
+    if current_user and current_user.get("role") == "parent":
+        parent_user_id = current_user.get("user_id") or current_user.get("id")
+        parent_email = current_user.get("email")
+        parent = db.query(Parent).filter((Parent.id == parent_user_id) | (Parent.email == parent_email)).first()
+        
+        if student_id is not None:
+            if parent and parent.student_id and int(student_id) != int(parent.student_id):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Forbidden: Parent is not authorized to access activity for this student."
+                )
+            target_student_id = int(student_id)
+        elif parent and parent.student_id:
+            target_student_id = int(parent.student_id)
 
     auth_hdr = request.headers.get("Authorization", "")
     if not target_student_id and auth_hdr.startswith("Bearer "):
         bearer_tok = auth_hdr.split("Bearer ")[1].strip()
         from app.auth.security import decode_access_token
         acc_claim = decode_access_token(bearer_tok)
-        if acc_claim and (acc_claim.get("user_id") or acc_claim.get("id") or acc_claim.get("student_id")):
+        if acc_claim and acc_claim.get("role") == "parent":
+            parent_email = acc_claim.get("sub") or acc_claim.get("email")
+            parent = db.query(Parent).filter(Parent.email == parent_email).first()
+            if student_id is not None:
+                if parent and parent.student_id and int(student_id) != int(parent.student_id):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Forbidden: Parent is not authorized to access activity for this student."
+                    )
+                target_student_id = int(student_id)
+            elif parent and parent.student_id:
+                target_student_id = int(parent.student_id)
+
+        if not target_student_id and acc_claim and (acc_claim.get("user_id") or acc_claim.get("id") or acc_claim.get("student_id")):
             try:
                 target_student_id = int(acc_claim.get("user_id") or acc_claim.get("id") or acc_claim.get("student_id"))
             except (ValueError, TypeError):
@@ -508,29 +543,25 @@ def get_current_activity(
             raise HTTPException(status_code=401, detail="Authentication required to view current activity.")
 
     student_id = target_student_id
-    import time
-    from datetime import datetime, date
-    from app.ai.behavior_intelligence_engine import behavior_intelligence_engine
 
     is_connected = False
-    if last_agent_ping_time and (time.time() - last_agent_ping_time) < 15.0:
+    if last_agent_ping_time and (time.time() - last_agent_ping_time) < 30.0:
         is_connected = True
 
     ent_status = warning_engine.get_entertainment_status(db, student_id)
     behavior_metrics = behavior_intelligence_engine.evaluate_student_telemetry(db, student_id)
 
-    # Calculate today's category durations from ActivityLog
     today_start = datetime.combine(date.today(), datetime.min.time())
     today_logs = db.query(ActivityLog).filter(
         ActivityLog.student_id == student_id,
         ActivityLog.timestamp >= today_start
     ).all()
 
-    edu_secs = sum(l.duration for l in today_logs if l.category == "Educational")
-    prod_secs = sum(l.duration for l in today_logs if l.category == "Productive")
-    ent_secs = sum(l.duration for l in today_logs if l.category == "Entertainment")
-    game_secs = sum(l.duration for l in today_logs if l.category == "Gaming")
-    util_secs = sum(l.duration for l in today_logs if l.category == "Utilities")
+    edu_secs = sum(l.duration for l in today_logs if l.category in ["Educational", "Education"])
+    prod_secs = sum(l.duration for l in today_logs if l.category in ["Productive", "Productivity"])
+    ent_secs = sum(l.duration for l in today_logs if l.category in ["Entertainment"])
+    game_secs = sum(l.duration for l in today_logs if l.category in ["Gaming"])
+    util_secs = sum(l.duration for l in today_logs if l.category in ["Utilities", "System", "Other"])
 
     app_name = "Desktop Agent"
     window_title = "Awaiting Active Telemetry"
@@ -539,6 +570,7 @@ def get_current_activity(
     confidence = 0.85
     idle_secs = 0
     sess_dur = 0
+    log_timestamp = None
 
     latest_log = db.query(ActivityLog).filter(ActivityLog.student_id == student_id).order_by(ActivityLog.timestamp.desc()).first()
     if latest_log:
@@ -547,6 +579,7 @@ def get_current_activity(
         website_url = latest_log.website_url or website_url
         category = latest_log.category or category
         confidence = latest_log.confidence or confidence
+        log_timestamp = latest_log.timestamp
 
     if last_telemetry_payload and last_telemetry_payload.get("student_id") == student_id:
         app_name = last_telemetry_payload.get("application_name", app_name)
@@ -557,18 +590,67 @@ def get_current_activity(
         idle_secs = last_telemetry_payload.get("idle_seconds", 0)
         sess_dur = last_telemetry_payload.get("session_duration_seconds", sess_dur)
 
-    started_at = latest_log.timestamp.strftime("%H:%M:%S") if latest_log and latest_log.timestamp else "N/A"
+    # Determine whether activity is active or idle
+    log_age_secs = 9999.0
+    if log_timestamp:
+        log_age_secs = (datetime.utcnow() - log_timestamp).total_seconds()
 
+    is_active = is_connected and (log_age_secs <= 60.0) and (idle_secs <= 60)
+    active_activity_status = "Active" if is_active else "No active activity detected"
+
+    # AI Context Classification & Scores
+    classifier = ActivityClassifier()
+    ai_meta = classifier.classify_with_context(app_name, window_title, website_url)
+
+    category = ai_meta["category"]
+    subcategory = ai_meta["subcategory"]
+    confidence = ai_meta["confidence"]
+    prod_score = ai_meta["productivity_score"]
+    focus_score = ai_meta["focus_score"]
+    dist_score = ai_meta["distraction_score"]
+    domain = ai_meta["domain"]
+
+    # Privacy Sanitization: ChatGPT prompt/response protection
+    if "chatgpt" in (website_url or "").lower() or "chatgpt" in window_title.lower():
+        window_title = "ChatGPT"
+        website_url = "https://chatgpt.com"
+        domain = "chatgpt.com"
+        category = "Other"
+        subcategory = "AI Assistant"
+
+    started_at = latest_log.timestamp.strftime("%H:%M:%S") if latest_log and latest_log.timestamp else "N/A"
     focus_res = central_metrics_engine.calculate_focus_index(db, student_id, 24.0)
     burnout_res = central_metrics_engine.calculate_burnout_risk(db, student_id, 24.0)
 
-    print(f"[DASHBOARD] Current activity returned for student {student_id}: {app_name}")
+    dur_mins = sess_dur // 60
+    dur_rem_secs = sess_dur % 60
+    duration_fmt = f"{dur_mins}m {dur_rem_secs}s" if dur_mins > 0 else f"{dur_rem_secs}s"
+
+    print(f"[DASHBOARD] Current activity returned for student {student_id}: {app_name} | Active={is_active}")
     return {
+        "is_active": is_active,
+        "active_activity_status": active_activity_status,
+        "application": app_name,
         "current_application": app_name,
+        "domain": domain,
+        "page_title": window_title,
         "window_title": window_title,
         "website_url": website_url if website_url else "N/A",
         "category": category,
+        "subcategory": subcategory,
         "confidence": confidence,
+        "confidence_percent": f"{int(confidence * 100)}%",
+        "productivity_score": prod_score,
+        "productivity_percent": f"{int(prod_score * 100)}%",
+        "focus_score": focus_score,
+        "focus_percent": f"{int(focus_score * 100)}%",
+        "distraction_score": dist_score,
+        "distraction_percent": f"{int(dist_score * 100)}%",
+        "active_duration_seconds": sess_dur,
+        "active_duration_formatted": duration_fmt,
+        "agent_connected": is_connected,
+        "student_id": student_id,
+
         "session_duration": sess_dur,
         "educational_duration": edu_secs,
         "productive_duration": prod_secs,
@@ -576,13 +658,11 @@ def get_current_activity(
         "gaming_duration": game_secs,
         "utilities_duration": util_secs,
         "idle_seconds": idle_secs,
-        "focus_score": focus_res["focus_score"],
         "burnout_probability": burnout_res["probability"],
         "burnout_risk_level": burnout_res["risk_level"],
         "focus_breakdown": focus_res,
         "burnout_breakdown": burnout_res,
         "current_activity_started_at": started_at,
-        "agent_connected": is_connected,
         "entertainment_status": ent_status,
 
         "recent_logs": [

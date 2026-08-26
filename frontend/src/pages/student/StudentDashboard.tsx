@@ -6,6 +6,7 @@ import { CircularProgress } from '../../components/ui/CircularProgress';
 import { StudentOnboardingWizard } from '../../components/onboarding/StudentOnboardingWizard';
 import { FocusScoreModal } from '../../components/monitoring/FocusScoreModal';
 import { BurnoutScoreModal } from '../../components/monitoring/BurnoutScoreModal';
+import { CurrentlyActiveCard } from '../../components/monitoring/CurrentlyActiveCard';
 import { useNavigate } from 'react-router-dom';
 import { getReadableAppName } from '../../utils/helpers';
 import { useAuth } from '../../context/AuthContext';
@@ -788,6 +789,9 @@ export const StudentDashboard: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* REAL-TIME AI CURRENTLY ACTIVE CARD */}
+      <CurrentlyActiveCard data={currentActivity} title="CURRENTLY ACTIVE" />
 
       {/* TOP GAUGES & TELEMETRY TIME CARDS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

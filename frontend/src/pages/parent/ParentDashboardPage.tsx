@@ -3,7 +3,8 @@ import { ParentService } from '../../services/parentService';
 import { ParentDashboardMetrics } from '../../types';
 import { CircularProgress } from '../../components/ui/CircularProgress';
 import { Modal } from '../../components/Modal';
-import { API_BASE_URL } from '../../services/api';
+import { API_BASE_URL, ApiService } from '../../services/api';
+import { CurrentlyActiveCard, CurrentlyActiveData } from '../../components/monitoring/CurrentlyActiveCard';
 import {
   ResponsiveContainer,
   PieChart,
@@ -88,6 +89,8 @@ export const ParentDashboardPage: React.FC = () => {
     weeklyDigest: true
   });
 
+  const [currentActivity, setCurrentActivity] = useState<CurrentlyActiveData | null>(null);
+
   const fetchParentData = (studentId: number) => {
     fetch(`${API_BASE_URL}/parent/dashboard?student_id=${studentId}`)
       .then(r => r.json())
@@ -101,6 +104,11 @@ export const ParentDashboardPage: React.FC = () => {
           setLoading(false);
         });
       });
+
+    fetch(`${API_BASE_URL}/monitoring/current-activity?student_id=${studentId}`, { headers: ApiService.getHeaders() })
+      .then(r => r.json())
+      .then((res: any) => setCurrentActivity(res))
+      .catch(() => {});
 
     fetch(`${API_BASE_URL}/parent/pending-approvals`)
       .then(r => r.json())
@@ -240,6 +248,9 @@ export const ParentDashboardPage: React.FC = () => {
         </div>
 
       </div>
+
+      {/* STUDENT CURRENT ACTIVITY CARD */}
+      <CurrentlyActiveCard data={currentActivity} title="STUDENT CURRENT ACTIVITY" />
 
       {/* PARENT VOICE SUMMARY COMPONENT */}
       <ParentVoiceSummary
