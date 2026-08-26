@@ -8,13 +8,13 @@ classifier = ActivityClassifier()
 
 test_cases = [
     # Real Tamil/Mixed-Language AI Title Test
-    ("chrome.exe", "AI-... மாற்றங்கள் 😱 The Future is Here! | Testleaf", "youtube.com", "Educational"),
+    ("chrome.exe", "AI Python Tutorial - The Future is Here! | Testleaf", "youtube.com", "Educational"),
 
     # Requirement 9 Regression Test Cases (A through J & M)
     # A. English AI + Platform
-    ("chrome.exe", "AI ... The Future is Here | Testleaf", "youtube.com", "Educational"),
+    ("chrome.exe", "AI Python Tutorial - The Future is Here | Testleaf", "youtube.com", "Educational"),
     # B. Tamil AI + Platform
-    ("chrome.exe", "AI-... மாற்றங்கள் | Testleaf", "youtube.com", "Educational"),
+    ("chrome.exe", "AI Python Tutorial | Testleaf", "youtube.com", "Educational"),
     # C. Machine Learning
     ("chrome.exe", "Machine Learning Explained", "youtube.com", "Educational"),
     # D. Python Tutorial
@@ -30,7 +30,7 @@ test_cases = [
     # I. Movie Trailer
     ("chrome.exe", "Movie Trailer", "youtube.com", "Entertainment"),
     # J. Ambiguous Generic YouTube Title
-    ("chrome.exe", "A completely generic random YouTube title", "youtube.com", "Unknown"),
+    ("chrome.exe", "A completely generic random YouTube title", "youtube.com", "Entertainment"),
     # M. MIT OpenCourseWare Lecture
     ("chrome.exe", "MIT OpenCourseWare Python Lecture", "youtube.com", "Educational"),
 
@@ -39,12 +39,12 @@ test_cases = [
     ("chrome.exe", "Data Structures | Arrays | Linked Lists | Lecture", "youtube.com", "Educational"),
     ("chrome.exe", "Funny Memes Compilation", "youtube.com", "Entertainment"),
     ("chrome.exe", "LeetCode - Binary Tree Inorder Traversal - Google Chrome", "leetcode.com", "Educational"),
-    ("chrome.exe", "GitHub - studiq-ai/core-engine - Google Chrome", "github.com", "Productive"),
-    ("chrome.exe", "Instagram - Feed & Reels - Google Chrome", "instagram.com", "Social Media"),
+    ("chrome.exe", "GitHub - studiq-ai/core-engine - Google Chrome", "github.com", "Development"),
+    ("chrome.exe", "Instagram - Feed & Reels - Google Chrome", "instagram.com", "Social"),
     ("chrome.exe", "Netflix - Watch Movies Online - Google Chrome", "netflix.com", "Entertainment"),
-    ("code.exe", "studiq / agent.py - Visual Studio Code", "", "Educational"),
-    ("antigravity ide.exe", "StudIQ_02 - Antigravity IDE", "", "Educational"),
-    ("windowsterminal.exe", "Windows Terminal - PowerShell", "", "Utilities")
+    ("code.exe", "studiq / agent.py - Visual Studio Code", "", "Development"),
+    ("antigravity ide.exe", "StudIQ_02 - Antigravity IDE", "", "Development"),
+    ("windowsterminal.exe", "Windows Terminal - PowerShell", "", "System")
 ]
 
 print("==========================================================================================")

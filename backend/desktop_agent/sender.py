@@ -61,9 +61,19 @@ class TelemetrySender:
             print(f"[Agent Queue Error] Failed to persist queue to disk: {e}")
 
     def send_telemetry(self, payload: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
-        """Dispatches telemetry. Includes agent_token in headers if present."""
-        token = os.getenv("STUDIQ_AGENT_TOKEN", "")
-        target_url = os.getenv("STUDIQ_BACKEND_URL", self.backend_url)
+        """Dispatches telemetry to production backend /api/v1/monitoring/telemetry endpoint."""
+        token = os.getenv("STUDIQ_AGENT_TOKEN", payload.get("agent_token", ""))
+        raw_url = os.getenv("STUDIQ_BACKEND_URL", self.backend_url or AgentConfig.BACKEND_URL)
+
+        target_url = raw_url.strip().rstrip("/")
+        if not target_url.endswith("/telemetry"):
+            target_url = target_url.replace("/update", "/telemetry")
+            if not target_url.endswith("/telemetry"):
+                if target_url.endswith("/api/v1"):
+                    target_url = f"{target_url}/monitoring/telemetry"
+                else:
+                    target_url = f"{target_url}/api/v1/monitoring/telemetry"
+
         headers = dict(self.headers)
         if token:
             headers["Authorization"] = f"Bearer {token}"
@@ -77,19 +87,20 @@ class TelemetrySender:
             res = requests.post(target_url, json=payload_to_send, headers=headers, timeout=5.0)
             print(f"[SENDER] HTTP {res.status_code}")
             if res.status_code in (200, 201):
+                print("[BACKEND] Telemetry accepted")
                 self.flush_offline_queue()
                 try:
                     return True, res.json()
                 except Exception:
-                    return True, {}
+                    return True, {"status": "success"}
             else:
                 print(f"[SENDER] Server returned HTTP {res.status_code}. Queueing payload offline.")
                 self.queue_offline_payload(payload_to_send)
-                return False, {}
+                return False, {"status_code": res.status_code, "detail": res.text}
         except Exception as err:
             print(f"[SENDER] Connection error ({err}). Queueing telemetry payload offline.")
             self.queue_offline_payload(payload_to_send)
-            return False, {}
+            return False, {"error": str(err)}
 
     def queue_offline_payload(self, payload: Dict[str, Any]):
         if len(self.offline_queue) >= self.max_queue_size:

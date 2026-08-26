@@ -32,16 +32,16 @@ import update_installed_agent
 class ClassificationLogCapture(logging.Handler):
     def __init__(self):
         super().__init__()
-        self.last_rule = "Standard Rule Engine Match"
-        self.last_keyword = "N/A"
+        self.last_rule = "Exact Application Rule"
+        self.last_item = "NONE"
 
     def emit(self, record):
         msg = record.getMessage()
         for line in msg.splitlines():
             if "Matched Rule:" in line:
                 self.last_rule = line.split("Matched Rule:", 1)[1].strip()
-            elif "Matched Keyword:" in line:
-                self.last_keyword = line.split("Matched Keyword:", 1)[1].strip()
+            elif "Matched Item:" in line or "Matched Keyword:" in line or "Matched Domain:" in line:
+                self.last_item = line.split(":", 1)[1].strip()
 
 def run_persistent_streaming_monitor():
     print("[INIT] Terminating old StudIQAgent.exe processes...")
@@ -61,12 +61,12 @@ def run_persistent_streaming_monitor():
     webbrowser.open("https://studiq-frontend.onrender.com")
 
     backend_base = "https://studiq-backend.onrender.com/api/v1"
-    os.environ["STUDIQ_BACKEND_URL"] = f"{backend_base}/monitoring/update"
+    os.environ["STUDIQ_BACKEND_URL"] = f"{backend_base}/monitoring/telemetry"
 
     # Initialize Real Pipeline Components
     collector = SystemActivityCollector()
     classifier = ActivityClassifier()
-    sender = TelemetrySender(f"{backend_base}/monitoring/update")
+    sender = TelemetrySender(f"{backend_base}/monitoring/telemetry")
 
     log_capture = ClassificationLogCapture()
     classifier_logger = logging.getLogger("ActivityClassifier")
@@ -138,12 +138,12 @@ def run_persistent_streaming_monitor():
                 continue
 
             # 2. Real AI Classification
-            log_capture.last_rule = "Standard Rule Engine Match"
-            log_capture.last_keyword = "N/A"
+            log_capture.last_rule = "Exact Application Rule"
+            log_capture.last_item = "NONE"
             category, confidence = classifier.classify_activity(app_name, win_title, website_url)
 
             rule_used = log_capture.last_rule
-            keyword_used = log_capture.last_keyword
+            item_used = log_capture.last_item
 
             # 3. Build Telemetry Payload
             cur_token = os.getenv("STUDIQ_AGENT_TOKEN", agent_token)
@@ -173,7 +173,8 @@ def run_persistent_streaming_monitor():
                     res_msg = resp_data.get("status")
                 backend_res_str = f"[{http_status} {res_msg}]"
             else:
-                backend_res_str = "[OFFLINE / Connection Refused or Failed]"
+                st_code = resp_data.get("status_code", "OFFLINE") if isinstance(resp_data, dict) else "OFFLINE"
+                backend_res_str = f"[{st_code} / Connection Refused or Failed]"
 
             # 5. Output Persistent Telemetry Trace (NEVER CLEAR SCREEN)
             print("[TELEMETRY PIPELINE TRACE]")
@@ -182,12 +183,11 @@ def run_persistent_streaming_monitor():
             print("")
             print("[CLASSIFIER LOG]")
             print(f"Matched Rule: {rule_used}")
-            if keyword_used != "N/A":
-                print(f"Matched Keyword: {keyword_used}")
+            print(f"Matched Item: {item_used}")
             print(f"Final Category: {category}")
-            print(f"Confidence: {confidence}")
+            print(f"Confidence: {confidence:.2f}")
             print("")
-            print(f"  3. Classifier Result: Category='{category}' | Confidence={confidence}")
+            print(f"  3. Classifier Result: Category='{category}' | Confidence={confidence:.2f}")
             print(f"  4. JSON Dispatched   : App='{app_name}' | Category='{category}'")
             print(f"  5. Backend Response  : {backend_res_str}")
             print("----------------------------------------------------------\n")
