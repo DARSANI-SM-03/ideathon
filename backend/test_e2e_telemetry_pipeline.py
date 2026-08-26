@@ -24,6 +24,7 @@ if backend_dir not in sys.path:
 from app.database.session import SessionLocal
 from app.models.user import Student
 from app.models.monitoring import ActivityLog, StudentSettings, StudySession
+from app.auth.security import create_agent_token
 from app.ai.central_metrics_engine import central_metrics_engine
 from app.routers import monitoring_router
 
@@ -58,8 +59,13 @@ class TestE2ETelemetryPipeline(unittest.TestCase):
         self.db.close()
 
     def test_1_telemetry_ingestion_and_persistence(self):
-        """1. Verify real telemetry event ingestion & database persistence."""
+        agent_token = create_agent_token({
+            "student_id": self.student.id,
+            "student_code": self.student.student_id,
+            "scope": "telemetry"
+        })
         payload = {
+            "agent_token": agent_token,
             "student_id": self.student.id,
             "application_name": "Visual Studio Code",
             "window_title": "agent.py - StudIQ Desktop Agent",
@@ -68,7 +74,9 @@ class TestE2ETelemetryPipeline(unittest.TestCase):
             "confidence": 0.98,
             "duration_seconds": 300
         }
-        res = monitoring_router.update_telemetry_from_agent(payload, self.db)
+        from starlette.requests import Request
+        dummy_req = Request({"type": "http", "headers": []})
+        res = monitoring_router.update_telemetry_from_agent(dummy_req, payload, self.db)
         self.assertEqual(res["status"], "success")
 
         # Verify DB record
@@ -157,6 +165,8 @@ class TestE2ETelemetryPipeline(unittest.TestCase):
 
     def test_6_pomodoro_session_and_settings_persistence(self):
         """6. Verify Pomodoro focus sessions and student settings persistence."""
+        self.db.query(StudentSettings).filter(StudentSettings.student_id == self.student.id).delete()
+        self.db.commit()
         # 1. Create & Update Settings
         settings = StudentSettings(
             student_id=self.student.id,

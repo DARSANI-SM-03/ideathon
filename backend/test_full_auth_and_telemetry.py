@@ -142,13 +142,24 @@ def run_tests():
     assert agent_token is not None, "Missing agent token"
     log_test("  [OK] Scoped Agent Session Generation PASSED")
 
-    # 8. Telemetry Ingestion with Agent Token
-    log_test("Test 8: Sending telemetry payload with agent_token...")
+    # 8. Telemetry Ingestion IDOR Check & Valid Agent Telemetry
+    log_test("Test 8a: Sending telemetry payload with mismatching student_id (IDOR Test)...")
+    status_mismatch, body_mismatch = http_post("/monitoring/telemetry", {
+        "agent_token": agent_token,
+        "student_id": 99999,  # Mismatching student_id
+        "application_name": "VS Code",
+        "duration_seconds": 15
+    })
+    log_test(f"  Telemetry Mismatch Response ({status_mismatch}): {body_mismatch}")
+    assert status_mismatch == 403, f"Expected 403 for student ID mismatch, got {status_mismatch}"
+    log_test("  [OK] Telemetry IDOR Mismatch Rejection (HTTP 403) PASSED")
+
+    log_test("Test 8b: Sending telemetry payload with matching student_id...")
     status_telem, body_telem = http_post("/monitoring/telemetry", {
         "agent_token": agent_token,
-        "student_id": 99999,  # Intentionally send wrong ID in body to verify server resolves real ID from JWT!
+        "student_id": student_pk,
         "application_name": "VS Code",
-        "window_title": "test_full_auth_and_telemetry.py - StudIQ",
+        "window_title": "Active IDE / Coding Work",
         "website_url": "https://studiq.edu",
         "category": "Educational",
         "confidence": 0.98,
@@ -156,7 +167,7 @@ def run_tests():
     })
     log_test(f"  Telemetry Ingest Response ({status_telem}): {body_telem}")
     assert status_telem == 200, f"Telemetry ingest failed with status {status_telem}"
-    log_test("  [OK] Telemetry Ingestion PASSED")
+    log_test("  [OK] Valid Telemetry Ingestion (HTTP 200) PASSED")
 
     # 9. Database Verification: Confirm Telemetry Bound to Correct Student Primary Key
     log_test("Test 9: Verifying database record binding in studiq.db...")

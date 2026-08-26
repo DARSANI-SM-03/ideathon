@@ -122,6 +122,16 @@ app.include_router(system_router.router, prefix=settings.API_V1_STR)
 
 
 
+@app.get("/health")
+@app.get(f"{settings.API_V1_STR}/health")
+def health_check():
+    """Unauthenticated lightweight health check for cloud load balancers."""
+    return {
+        "status": "healthy",
+        "service": settings.PROJECT_NAME,
+        "version": settings.PROJECT_VERSION
+    }
+
 @app.get("/")
 def root():
     return {

@@ -34,17 +34,61 @@ class SystemActivityCollector:
                 pass
         return 0.0
 
+    def sanitize_and_abstract_window_title(self, app_name: str, raw_title: str) -> tuple:
+        """
+        Privacy-by-Design: Evaluates raw window title locally on the device to extract
+        domain/category, but NEVER exposes or transmits the raw title containing PII.
+        Returns (anonymized_title, website_url).
+        """
+        appName_lower = app_name.lower()
+        title_lower = raw_title.lower() if raw_title else ""
+        website_url = ""
+
+        # Extract domain locally from browser title
+        if any(b in appName_lower for b in ["chrome", "edge", "firefox", "brave", "opera"]):
+            if "youtube" in title_lower:
+                website_url = "youtube.com"
+            elif "leetcode" in title_lower:
+                website_url = "leetcode.com"
+            elif "arxiv" in title_lower:
+                website_url = "arxiv.org"
+            elif "coursera" in title_lower:
+                website_url = "coursera.org"
+            elif "github" in title_lower:
+                website_url = "github.com"
+            elif "instagram" in title_lower:
+                website_url = "instagram.com"
+            elif "netflix" in title_lower:
+                website_url = "netflix.com"
+            elif "amazon" in title_lower:
+                website_url = "amazon.com"
+
+            if website_url:
+                anonymized_title = f"Web Activity ({website_url})"
+            else:
+                anonymized_title = "Active Web Session"
+        elif "code" in appName_lower or "devenv" in appName_lower or "idea" in appName_lower:
+            anonymized_title = "Active IDE / Coding Work"
+        elif "word" in appName_lower or "excel" in appName_lower or "powerpnt" in appName_lower:
+            anonymized_title = "Document Editing"
+        elif "teams" in appName_lower or "slack" in appName_lower or "zoom" in appName_lower:
+            anonymized_title = "Communication & Collaboration"
+        else:
+            anonymized_title = f"Active {app_name} Session"
+
+        return anonymized_title, website_url
+
     def get_foreground_window_info(self) -> Dict[str, str]:
-        """Collects foreground active application name and window title."""
+        """Collects foreground active application name and privacy-sanitized activity label."""
+        import os
         appName = "Unknown Application"
-        windowTitle = "Active Desktop Session"
-        websiteUrl = ""
+        rawWindowTitle = ""
 
         if IS_WINDOWS:
             try:
                 hwnd = win32gui.GetForegroundWindow()
                 if hwnd:
-                    windowTitle = win32gui.GetWindowText(hwnd) or "Active Desktop Session"
+                    rawWindowTitle = win32gui.GetWindowText(hwnd) or ""
                     _, pid = win32process.GetWindowThreadProcessId(hwnd)
                     try:
                         import win32process, win32api, win32con
@@ -62,29 +106,14 @@ class SystemActivityCollector:
             except Exception:
                 pass
         else:
-            # Simulated telemetry fallback for non-Windows platforms
-            appName = "Visual Studio Code"
-            windowTitle = "studiq / src / agent.py - StudIQ AI Project"
-            websiteUrl = "github.com/studiq-ai/core-engine"
+            appName = "code.exe"
+            rawWindowTitle = "studiq - Visual Studio Code"
 
-        # Basic domain extraction if title contains web page metadata
-        if "chrome" in appName.lower() or "edge" in appName.lower() or "firefox" in appName.lower():
-            if "youtube" in windowTitle.lower():
-                websiteUrl = "youtube.com"
-            elif "leetcode" in windowTitle.lower():
-                websiteUrl = "leetcode.com"
-            elif "arxiv" in windowTitle.lower():
-                websiteUrl = "arxiv.org"
-            elif "coursera" in windowTitle.lower():
-                websiteUrl = "coursera.org"
-            elif "github" in windowTitle.lower():
-                websiteUrl = "github.com"
-            elif "instagram" in windowTitle.lower():
-                websiteUrl = "instagram.com"
+        anonymizedTitle, websiteUrl = self.sanitize_and_abstract_window_title(appName, rawWindowTitle)
 
         return {
             "appName": appName,
-            "windowTitle": windowTitle,
+            "windowTitle": anonymizedTitle,
             "websiteUrl": websiteUrl
         }
 

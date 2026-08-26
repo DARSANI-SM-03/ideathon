@@ -169,12 +169,18 @@ def start_agent_process(backend_url: str = "", token: str = "", student_id: int 
         return {"status": "started", "message": "Monitoring agent startup initiated.", "pid": os.getpid()}
 
 class BridgeRequestHandler(BaseHTTPRequestHandler):
+    def _is_origin_allowed(self) -> bool:
+        origin = self.headers.get("Origin", "")
+        if not origin:
+            return True  # Native non-browser desktop app or direct localhost tool
+        return origin in ALLOWED_ORIGINS
+
     def _send_cors_headers(self):
         origin = self.headers.get("Origin", "")
-        if origin:
+        if origin and origin in ALLOWED_ORIGINS:
             self.send_header("Access-Control-Allow-Origin", origin)
         else:
-            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Origin", "http://localhost:5173")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
@@ -186,6 +192,10 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(data).encode("utf-8"))
 
     def do_OPTIONS(self):
+        if not self._is_origin_allowed():
+            self.send_response(403)
+            self.end_headers()
+            return
         self.send_response(200)
         self._send_cors_headers()
         self.end_headers()
@@ -193,6 +203,10 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?")[0]
         log_debug(f"HTTP GET {path}")
+        if not self._is_origin_allowed():
+            self._send_json_response(403, {"error": "Forbidden: Cross-origin request rejected."})
+            return
+
         if path in ("/status", "/health", "/"):
             running = is_agent_running()
             pid = agent_process.pid if (running and agent_process) else None
@@ -211,6 +225,10 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = self.path.split("?")[0]
         log_debug(f"HTTP POST {path}")
+        if not self._is_origin_allowed():
+            self._send_json_response(403, {"error": "Forbidden: Cross-origin request rejected."})
+            return
+
         content_length = int(self.headers.get("Content-Length", 0))
         body_data = {}
         if content_length > 0:

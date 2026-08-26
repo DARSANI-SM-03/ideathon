@@ -20,9 +20,11 @@ from app.auth.dependencies import get_current_user, get_current_user_optional
 
 router = APIRouter(prefix="/monitoring", tags=["Monitoring & Explainable AI"])
 
-# Global state to track last desktop agent ping
+# Global state to track last desktop agent ping, rate limiting & deduplication
 last_agent_ping_time: Optional[float] = None
 last_telemetry_payload: Optional[Dict[str, Any]] = None
+rate_limit_tracker: Dict[int, List[float]] = {}
+dedup_tracker: Dict[str, float] = {}
 
 @router.post("/agent/session")
 def create_agent_session(current_user: dict = Depends(get_current_user)):
@@ -113,32 +115,92 @@ def receive_agent_heartbeat(payload: Dict[str, Any] = Body(...), db: Session = D
 def update_telemetry_from_agent(request: Request, payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
     """
     Receives JSON telemetry updates from StudIQ Windows Desktop Agent.
-    Authoritatively resolves student_id from scoped agent_session JWT token if provided.
-    Updates continuous entertainment tracker and stores activity log in database.
+    Authoritatively verifies agent_token JWT session token. Rejects unauthenticated telemetry.
+    Checks IDOR, enforces rate-limiting, range validation, and event deduplication.
     """
-    global last_agent_ping_time, last_telemetry_payload
+    global last_agent_ping_time, last_telemetry_payload, rate_limit_tracker, dedup_tracker
     import time
-    last_agent_ping_time = time.time()
 
-    student_id = payload.get("student_id", 1)
-
-    # Security: Check for scoped agent JWT session token in payload or Authorization header
+    # P0-1: Mandatory Agent JWT Verification
     agent_token = payload.get("agent_token") or payload.get("token")
     if not agent_token:
         auth_hdr = request.headers.get("Authorization", "")
         if auth_hdr.startswith("Bearer "):
             agent_token = auth_hdr.split("Bearer ")[1].strip()
 
-    if agent_token:
-        decoded_claim = decode_agent_token(agent_token)
-        if decoded_claim and decoded_claim.get("student_id"):
-            student_id = int(decoded_claim["student_id"])
-    app_name = payload.get("application_name", "Unknown Application")
-    window_title = payload.get("window_title", "")
-    website_url = payload.get("website_url", "")
+    if not agent_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized: Valid agent session token required for telemetry."
+        )
+
+    decoded_claim = decode_agent_token(agent_token)
+    if not decoded_claim or not decoded_claim.get("student_id"):
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized: Invalid or expired agent session token."
+        )
+
+    authoritative_student_id = int(decoded_claim["student_id"])
+
+    # P0-2: IDOR Prevention - Verify payload student_id matches token claim if provided
+    if "student_id" in payload and payload["student_id"] is not None:
+        try:
+            payload_student_id = int(payload["student_id"])
+            if payload_student_id != authoritative_student_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Forbidden: Telemetry student ID mismatch with authenticated agent token."
+                )
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid student_id parameter.")
+
+    student_id = authoritative_student_id
+    now_ts = time.time()
+    last_agent_ping_time = now_ts
+
+    # P1: Telemetry Rate Limiting (Max 60 requests / minute / student)
+    window_start = now_ts - 60.0
+    student_requests = [t for t in rate_limit_tracker.get(student_id, []) if t > window_start]
+    if len(student_requests) >= 60:
+        raise HTTPException(
+            status_code=429,
+            detail="Too Many Requests: Telemetry rate limit exceeded (max 60 req/min)."
+        )
+    student_requests.append(now_ts)
+    rate_limit_tracker[student_id] = student_requests
+
+    # P1: Range & Numeric Validation
+    duration_secs = payload.get("duration_seconds", 5)
+    try:
+        duration_secs = float(duration_secs)
+        if duration_secs < 1 or duration_secs > 300:
+            duration_secs = 5.0
+    except (ValueError, TypeError):
+        duration_secs = 5.0
+
+    idle_secs = payload.get("idle_seconds", 0)
+    try:
+        idle_secs = float(idle_secs)
+        if idle_secs < 0 or idle_secs > 86400:
+            idle_secs = 0.0
+    except (ValueError, TypeError):
+        idle_secs = 0.0
+
+    app_name = str(payload.get("application_name", "Unknown Application"))[:100]
+    window_title = str(payload.get("window_title", "Active Desktop Session"))[:100]
+    website_url = str(payload.get("website_url", ""))[:100]
     category = payload.get("category")
     confidence = payload.get("confidence")
-    duration_secs = payload.get("duration_seconds", 5)
+
+    # P1: Deduplication Check (3-second window for same student & app)
+    dedup_key = f"{student_id}:{app_name}:{website_url}"
+    if dedup_key in dedup_tracker and (now_ts - dedup_tracker[dedup_key]) < 3.0:
+        return {
+            "status": "ignored_duplicate",
+            "message": "Duplicate telemetry event ignored within deduplication window."
+        }
+    dedup_tracker[dedup_key] = now_ts
 
     # Re-evaluate with backend behavior_engine if category is missing or Unknown
     if not category or category == "Unknown":
