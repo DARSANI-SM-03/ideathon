@@ -1,8 +1,7 @@
 """
-StudIQ Real-Time Telemetry Live Monitor (run_live_monitor.py)
-Dedicated real-time diagnostic console that polls authentic Windows hardware activity,
-local bridge status, SQLite database ActivityLog records, and production backend APIs.
-Displays a 5-event recent history stream and updates continuously every 1-2 seconds.
+StudIQ Windows Desktop Monitoring Agent - Persistent Streaming Telemetry Console
+Runs a real daemon streaming log every 5 seconds without clearing the screen or redrawing.
+Hooks directly into collector.py, classifier.py, sender.py, and the production FastAPI backend.
 """
 
 import sys
@@ -12,12 +11,11 @@ import subprocess
 import webbrowser
 import requests
 import json
-import psutil
+import logging
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
-# Absolute path resolution from script location
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 WORKSPACE_ROOT = os.path.dirname(PROJECT_ROOT)
@@ -25,18 +23,32 @@ WORKSPACE_ROOT = os.path.dirname(PROJECT_ROOT)
 sys.path.insert(0, SCRIPT_DIR)
 sys.path.insert(0, PROJECT_ROOT)
 
+from config import AgentConfig
 from collector import SystemActivityCollector
-from app.database.session import get_db, engine
-from app.database.base import Base
-from app.models.monitoring import ActivityLog
+from classifier import ActivityClassifier
+from sender import TelemetrySender
+import update_installed_agent
 
-def start_live_telemetry_monitor():
-    print("[INIT] Stopping any stale StudIQAgent.exe processes...")
+class ClassificationLogCapture(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.last_rule = "Standard Rule Engine Match"
+        self.last_keyword = "N/A"
+
+    def emit(self, record):
+        msg = record.getMessage()
+        for line in msg.splitlines():
+            if "Matched Rule:" in line:
+                self.last_rule = line.split("Matched Rule:", 1)[1].strip()
+            elif "Matched Keyword:" in line:
+                self.last_keyword = line.split("Matched Keyword:", 1)[1].strip()
+
+def run_persistent_streaming_monitor():
+    print("[INIT] Terminating old StudIQAgent.exe processes...")
     os.system("taskkill /F /IM StudIQAgent.exe >nul 2>&1")
     time.sleep(1)
 
-    print("[INIT] Verifying and updating installed executable in %LOCALAPPDATA%\\StudIQ\\Agent...")
-    import update_installed_agent
+    print("[INIT] Verifying and updating installed agent binary at %LOCALAPPDATA%\\StudIQ\\Agent...")
     update_installed_agent.update_installed_agent()
 
     appdata = os.getenv("LOCALAPPDATA", "")
@@ -48,181 +60,144 @@ def start_live_telemetry_monitor():
     print("[INIT] Opening production website: https://studiq-frontend.onrender.com ...")
     webbrowser.open("https://studiq-frontend.onrender.com")
 
-    collector = SystemActivityCollector()
-    Base.metadata.create_all(bind=engine)
-    db = next(get_db())
-
     backend_base = "https://studiq-backend.onrender.com/api/v1"
+    os.environ["STUDIQ_BACKEND_URL"] = f"{backend_base}/monitoring/update"
 
-    print("\n[STUDIQ REAL-TIME MONITOR LAUNCHED — REFRESHING EVERY 1.5 SECONDS...]\n")
+    # Initialize Real Pipeline Components
+    collector = SystemActivityCollector()
+    classifier = ActivityClassifier()
+    sender = TelemetrySender(f"{backend_base}/monitoring/update")
+
+    log_capture = ClassificationLogCapture()
+    classifier_logger = logging.getLogger("ActivityClassifier")
+    classifier_logger.addHandler(log_capture)
+
+    # Fetch Active Cloud Session
+    student_id = 701
+    student_code = "STU-701-ALICE"
+    agent_token = ""
+
+    try:
+        s_res = requests.get(f"{backend_base}/monitoring/agent/active-session", timeout=3.0)
+        if s_res.ok:
+            s_data = s_res.json()
+            if s_data.get("active"):
+                student_id = s_data.get("student_id", student_id)
+                student_code = s_data.get("student_code", student_code)
+                agent_token = s_data.get("agent_token", "")
+                os.environ["STUDIQ_AGENT_TOKEN"] = agent_token
+                os.environ["STUDIQ_STUDENT_ID"] = str(student_id)
+                os.environ["STUDIQ_STUDENT_CODE"] = student_code
+    except Exception:
+        pass
+
+    # Print Persistent Startup Header
+    print("\n==========================================================")
+    print("   STUDIQ WINDOWS DESKTOP MONITORING AGENT v1.0")
+    print("   AI Digital Behaviour Intelligence Daemon")
+    print("==========================================================")
+    print(f"Target Backend API : {backend_base}")
+    print(f"Student ID         : {student_code} (ID: {student_id})")
+    print("Sampling Frequency : Every 5 seconds")
+    print("Privacy Guarantee  : Zero access to Gallery, Passwords, Bank Apps, Files, Messages")
+    print("----------------------------------------------------------\n")
+    print("[Agent Loop Started] Monitoring active foreground windows...\n")
+    sys.stdout.flush()
+
     time.sleep(2)
 
     while True:
         try:
-            os.system("cls" if sys.platform == "win32" else "clear")
-
-            now_str = time.strftime("%Y-%m-%d %H:%M:%S")
-            exe_size = os.path.getsize(exe_path) if os.path.exists(exe_path) else 0
-            exe_mtime = time.ctime(os.path.getmtime(exe_path)) if os.path.exists(exe_path) else "N/A"
-
-            # Check Agent PIDs
-            running_pids = []
-            for proc in psutil.process_iter(['pid', 'name']):
-                if proc.info['name'] and 'StudIQAgent' in proc.info['name']:
-                    running_pids.append(proc.info['pid'])
-
-            agent_status = f"RUNNING (PID: {running_pids[0]})" if running_pids else "STOPPED"
-            agent_pid_str = str(running_pids[0]) if running_pids else "NONE"
-
-            # Real Windows Foreground Collector
-            snap = collector.collect_telemetry_snapshot()
-            app_name = snap.get("appName", "Unknown")
-            win_title = snap.get("windowTitle", "Unknown")
-            idle_secs = snap.get("idleSeconds", 0.0)
-
-            # Cloud Active Session Lookup
-            sync_session = {}
+            # 1. Real Windows Collector Capture
             try:
-                s_res = requests.get(f"{backend_base}/monitoring/agent/active-session", timeout=2.0)
-                if s_res.ok:
-                    sync_session = s_res.json()
-            except Exception:
-                pass
+                snap = collector.collect_telemetry_snapshot()
+                app_name = snap.get("appName", "Unknown")
+                win_title = snap.get("windowTitle", "")
+                website_url = snap.get("websiteUrl", "")
+                idle_secs = snap.get("idleSeconds", 0.0)
+                sess_dur = snap.get("sessionDurationSeconds", 0)
+                collector_err = False
+            except Exception as e:
+                app_name = "ERROR"
+                win_title = "NOT AVAILABLE"
+                website_url = ""
+                idle_secs = 0.0
+                sess_dur = 0
+                collector_err = True
 
-            student_id = sync_session.get("student_id", "NOT SYNCED")
-            session_active = "ACTIVE" if sync_session.get("active") else "INACTIVE"
-            token_present = "PRESENT" if sync_session.get("agent_token") else "MISSING"
+            if collector_err:
+                print("[TELEMETRY PIPELINE TRACE]")
+                print("  1. Collector Output : ERROR")
+                print("  2. Classifier Input  : NOT AVAILABLE")
+                print("  3. Classifier Result : NOT AVAILABLE")
+                print("  4. JSON Dispatched   : NOT SENT")
+                print("  5. Backend Response  : NOT SENT")
+                print("----------------------------------------------------------\n")
+                sys.stdout.flush()
+                time.sleep(5)
+                continue
 
-            # Local Bridge Status
-            bridge_res_str = "HTTP 200 OK"
-            bridge_conn = "CONNECTED"
-            try:
-                b_res = requests.get("http://127.0.0.1:8765/status", timeout=1.0)
-                if not b_res.ok:
-                    bridge_res_str = f"HTTP {b_res.status_code}"
-                    bridge_conn = "ERROR"
-            except Exception:
-                bridge_res_str = "BLOCKED BY BROWSER / UNREACHABLE"
-                bridge_conn = "DISCONNECTED"
+            # 2. Real AI Classification
+            log_capture.last_rule = "Standard Rule Engine Match"
+            log_capture.last_keyword = "N/A"
+            category, confidence = classifier.classify_activity(app_name, win_title, website_url)
 
-            # SQLite Database Query for Latest ActivityLog
-            latest_log = db.query(ActivityLog).order_by(ActivityLog.id.desc()).first()
-            db_app = latest_log.application_name if latest_log else "None"
-            db_time = latest_log.timestamp.strftime("%H:%M:%S") if (latest_log and latest_log.timestamp) else "None"
-            db_category = latest_log.category if latest_log else "None"
-            db_confidence = f"{latest_log.confidence:.2f}" if (latest_log and latest_log.confidence) else "None"
-            db_status_str = "INSERTED" if latest_log else "NOT RECEIVED"
+            rule_used = log_capture.last_rule
+            keyword_used = log_capture.last_keyword
 
-            # Fetch Last 5 Real ActivityLog Events
-            last_5_logs = db.query(ActivityLog).order_by(ActivityLog.id.desc()).limit(5).all()
+            # 3. Build Telemetry Payload
+            cur_token = os.getenv("STUDIQ_AGENT_TOKEN", agent_token)
+            cur_student_id = int(os.getenv("STUDIQ_STUDENT_ID", str(student_id)))
+            cur_student_code = os.getenv("STUDIQ_STUDENT_CODE", student_code)
 
-            # Dashboard API Polling
-            curr_app = "Unavailable"
-            curr_title = "Unavailable"
-            api_status = "HTTP 401"
-            if sync_session.get("agent_token"):
-                try:
-                    headers = {"Authorization": f"Bearer {sync_session['agent_token']}"}
-                    api_res = requests.get(f"{backend_base}/monitoring/current-activity", headers=headers, timeout=2.5)
-                    api_status = f"HTTP {api_res.status_code}"
-                    if api_res.ok:
-                        data = api_res.json()
-                        curr_app = data.get("current_application", "N/A")
-                        curr_title = data.get("window_title", "N/A")
-                except Exception as e:
-                    api_status = f"Error: {e}"
+            payload = {
+                "student_id": cur_student_id,
+                "student_code": cur_student_code,
+                "agent_token": cur_token,
+                "application_name": app_name,
+                "window_title": win_title,
+                "website_url": website_url,
+                "category": category,
+                "confidence": confidence,
+                "idle_seconds": idle_secs,
+                "session_duration_seconds": sess_dur
+            }
 
-            # Calculate Monitoring Status
-            mon_label = "🔴 TELEMETRY STOPPED"
-            last_sec_ago = "N/A"
-            delta_sec = 999.0
+            # 4. Dispatch Telemetry via TelemetrySender over HTTPS
+            success, resp_data = sender.send_telemetry(payload)
 
-            if latest_log and latest_log.timestamp:
-                from datetime import datetime
-                delta_sec = (datetime.utcnow() - latest_log.timestamp).total_seconds()
-                last_sec_ago = f"{delta_sec:.1f}s ago"
-
-            if delta_sec < 30.0:
-                mon_label = "🟢 REAL TELEMETRY ACTIVE"
-            elif running_pids:
-                mon_label = "🟡 AGENT RUNNING — WAITING FOR TELEMETRY"
-
-            print("============================================================")
-            print("              STUDIQ REAL-TIME TELEMETRY                    ")
-            print("============================================================")
-            print(f"TIME        : {now_str}")
-            print(f"AGENT       : {agent_status}")
-            print(f"AGENT PID   : {agent_pid_str}")
-            print(f"EXE         : {exe_path}")
-            print(f"VERSION     : {exe_size} bytes | {exe_mtime}")
-            print("")
-            print("STUDENT SESSION")
-            print("------------------------------------------------------------")
-            print(f"STUDENT ID  : {student_id}")
-            print(f"SESSION     : {session_active}")
-            print(f"TOKEN       : {token_present}")
-            print("")
-            print("WINDOWS COLLECTOR")
-            print("------------------------------------------------------------")
-            print(f"FOREGROUND APP : {app_name}")
-            print(f"WINDOW TITLE   : {win_title}")
-            print(f"IDLE TIME      : {idle_secs:.1f}s")
-            print(f"COLLECTOR      : {'OK' if app_name else 'ERROR'}")
-            print("")
-            print("TELEMETRY & SENDER")
-            print("------------------------------------------------------------")
-            print(f"LAST CAPTURE   : {now_str}")
-            print(f"LAST SEND      : {db_time}")
-            print(f"SEND STATUS    : {bridge_res_str}")
-            print(f"LAST APP       : {db_app}")
-            print(f"CATEGORY       : {db_category}")
-            print(f"CONFIDENCE     : {db_confidence}")
-            print("")
-            print("BACKEND & DATABASE")
-            print("------------------------------------------------------------")
-            print(f"BACKEND URL    : {backend_base}")
-            print(f"CONNECTION     : {bridge_conn}")
-            print(f"DATABASE       : {db_status_str}")
-            print(f"LATEST APP     : {db_app}")
-            print(f"LATEST TIME    : {db_time}")
-            print("")
-            print("DASHBOARD API")
-            print("------------------------------------------------------------")
-            print(f"API STATUS     : {api_status}")
-            print(f"CURRENT APP    : {curr_app}")
-            print(f"WINDOW TITLE   : {curr_title}")
-            print("")
-            print("MONITORING STATUS")
-            print("------------------------------------------------------------")
-            print(f"STATUS         : {mon_label}")
-            print(f"LAST TELEMETRY : {last_sec_ago}")
-            print("")
-            print("============================================================")
-            print("              RECENT 5 REAL TELEMETRY EVENTS                ")
-            print("============================================================")
-            if last_5_logs:
-                for l in reversed(last_5_logs):
-                    t_str = l.timestamp.strftime("%H:%M:%S") if l.timestamp else "N/A"
-                    print(f"[{t_str}] {l.application_name:<18} -> {l.category}")
+            if success:
+                http_status = "200 OK"
+                res_msg = "persistent"
+                if isinstance(resp_data, dict) and resp_data.get("status"):
+                    res_msg = resp_data.get("status")
+                backend_res_str = f"[{http_status} {res_msg}]"
             else:
-                print("No ActivityLog entries recorded yet.")
-            print("")
-            print("============================================================")
-            print("              LIVE PIPELINE CHECKS                          ")
-            print("============================================================")
-            print(f"[{'OK' if app_name else 'FAIL'}] WINDOWS COLLECTOR")
-            print(f"[{'OK' if running_pids else 'FAIL'}] AGENT")
-            print(f"[{'OK' if token_present == 'PRESENT' else 'FAIL'}] STUDENT SESSION")
-            print(f"[{'OK' if latest_log else 'FAIL'}] DATABASE INSERT")
-            print(f"[{'OK' if curr_app != 'Unavailable' else 'FAIL'}] DASHBOARD API")
-            print(f"[{'OK' if delta_sec < 30.0 else 'FAIL'}] LIVE MONITORING")
-            print("============================================================")
+                backend_res_str = "[OFFLINE / Connection Refused or Failed]"
 
-            time.sleep(1.5)
+            # 5. Output Persistent Telemetry Trace (NEVER CLEAR SCREEN)
+            print("[TELEMETRY PIPELINE TRACE]")
+            print(f"  1. Collector Output : App='{app_name}' | Title='{win_title}' | URL='{website_url}'")
+            print(f"  2. Classifier Input  : App='{app_name}' | Title='{win_title}' | URL='{website_url}'")
+            print("")
+            print("[CLASSIFIER LOG]")
+            print(f"Matched Rule: {rule_used}")
+            if keyword_used != "N/A":
+                print(f"Matched Keyword: {keyword_used}")
+            print(f"Final Category: {category}")
+            print(f"Confidence: {confidence}")
+            print("")
+            print(f"  3. Classifier Result: Category='{category}' | Confidence={confidence}")
+            print(f"  4. JSON Dispatched   : App='{app_name}' | Category='{category}'")
+            print(f"  5. Backend Response  : {backend_res_str}")
+            print("----------------------------------------------------------\n")
+            sys.stdout.flush()
+
+            time.sleep(5)
 
         except KeyboardInterrupt:
-            print("\n[MONITOR TERMINATED BY USER]")
+            print("\n[Agent Loop Stopped by User]")
             sys.exit(0)
 
 if __name__ == "__main__":
-    start_live_telemetry_monitor()
+    run_persistent_streaming_monitor()

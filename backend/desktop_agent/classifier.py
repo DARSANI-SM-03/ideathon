@@ -387,3 +387,12 @@ class ActivityClassifier:
         category, _ = self.classify_with_confidence(app_name, window_title, website_url, whitelisted_apps)
         return category
 
+    def classify_activity(
+        self,
+        app_name: str,
+        window_title: str = "",
+        website_url: str = "",
+        whitelisted_apps: Optional[List[str]] = None
+    ) -> Tuple[str, float]:
+        return self.classify_with_confidence(app_name, window_title, website_url, whitelisted_apps)
+
