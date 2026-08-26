@@ -194,6 +194,9 @@ def main():
 
     try:
         while True:
+            cur_student_id = int(os.getenv("STUDIQ_STUDENT_ID", str(student_id)))
+            cur_student_code = os.getenv("STUDIQ_STUDENT_CODE", student_code)
+
             snapshot = collector.collect_telemetry_snapshot()
             app_name = snapshot["appName"]
             window_title = snapshot["windowTitle"]
@@ -211,8 +214,8 @@ def main():
             print(f"  3. Classifier Result: Category='{category}' | Confidence={confidence:.2f}")
 
             payload = {
-                "student_id": student_id,
-                "student_code": student_code,
+                "student_id": cur_student_id,
+                "student_code": cur_student_code,
                 "application_name": app_name,
                 "window_title": window_title,
                 "website_url": website_url,

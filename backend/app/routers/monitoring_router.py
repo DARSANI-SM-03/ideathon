@@ -294,10 +294,18 @@ def get_current_activity(
     if current_user and current_user.get("role") == "student":
         target_student_id = current_user.get("user_id") or current_user.get("id")
 
-    if not target_student_id:
-        auth_hdr = request.headers.get("Authorization", "")
-        if auth_hdr.startswith("Bearer "):
-            bearer_tok = auth_hdr.split("Bearer ")[1].strip()
+    auth_hdr = request.headers.get("Authorization", "")
+    if not target_student_id and auth_hdr.startswith("Bearer "):
+        bearer_tok = auth_hdr.split("Bearer ")[1].strip()
+        from app.auth.security import decode_access_token
+        acc_claim = decode_access_token(bearer_tok)
+        if acc_claim and (acc_claim.get("user_id") or acc_claim.get("id") or acc_claim.get("student_id")):
+            try:
+                target_student_id = int(acc_claim.get("user_id") or acc_claim.get("id") or acc_claim.get("student_id"))
+            except (ValueError, TypeError):
+                pass
+
+        if not target_student_id:
             agent_claim = decode_agent_token(bearer_tok)
             if agent_claim and agent_claim.get("student_id"):
                 try:

@@ -149,10 +149,19 @@ def stop_agent_process() -> bool:
 def start_agent_process(backend_url: str = "", token: str = "", student_id: int = 1, student_code: str = "STU-2026-001") -> Dict[str, Any]:
     global agent_process, agent_thread, agent_thread_running
     with agent_process_lock:
+        if token:
+            os.environ["STUDIQ_AGENT_TOKEN"] = token
+        if backend_url:
+            os.environ["STUDIQ_BACKEND_URL"] = backend_url
+        if student_id:
+            os.environ["STUDIQ_STUDENT_ID"] = str(student_id)
+        if student_code:
+            os.environ["STUDIQ_STUDENT_CODE"] = str(student_code)
+
         if is_agent_running():
             pid = agent_process.pid if agent_process else os.getpid()
-            log_debug("start_agent_process called but agent is already running.")
-            return {"status": "already_running", "pid": pid}
+            log_debug(f"start_agent_process: Agent already running (pid={pid}). Environment variables updated: student_id={student_id}, student_code={student_code}, token_present={bool(token)}.")
+            return {"status": "already_running", "pid": pid, "student_id": student_id, "student_code": student_code}
 
         agent_thread = threading.Thread(
             target=run_agent_worker,
@@ -165,7 +174,7 @@ def start_agent_process(backend_url: str = "", token: str = "", student_id: int 
             daemon=True
         )
         agent_thread.start()
-        log_debug("Agent monitoring worker thread launched successfully.")
+        log_debug(f"Agent monitoring worker thread launched successfully for student_id={student_id}.")
         return {"status": "started", "message": "Monitoring agent startup initiated.", "pid": os.getpid()}
 
 class BridgeRequestHandler(BaseHTTPRequestHandler):
