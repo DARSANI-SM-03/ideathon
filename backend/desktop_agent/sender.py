@@ -63,6 +63,7 @@ class TelemetrySender:
     def send_telemetry(self, payload: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
         """Dispatches telemetry. Includes agent_token in headers if present."""
         token = os.getenv("STUDIQ_AGENT_TOKEN", "")
+        target_url = os.getenv("STUDIQ_BACKEND_URL", self.backend_url)
         headers = dict(self.headers)
         if token:
             headers["Authorization"] = f"Bearer {token}"
@@ -72,8 +73,8 @@ class TelemetrySender:
             payload_to_send["agent_token"] = token
 
         try:
-            print(f"[SENDER] POST {self.backend_url}")
-            res = requests.post(self.backend_url, json=payload_to_send, headers=headers, timeout=5.0)
+            print(f"[SENDER] POST {target_url}")
+            res = requests.post(target_url, json=payload_to_send, headers=headers, timeout=5.0)
             print(f"[SENDER] HTTP {res.status_code}")
             if res.status_code in (200, 201):
                 self.flush_offline_queue()

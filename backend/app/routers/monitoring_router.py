@@ -91,6 +91,25 @@ def get_monitoring_health():
         "server_timestamp": time.time()
     }
 
+@router.post("/agent/revoke-session")
+@router.post("/agent/logout")
+def revoke_agent_session(request: Request, payload: Optional[Dict[str, Any]] = Body(None)):
+    """
+    Explicitly revokes an agent session token upon student logout to prevent unauthorized telemetry replay.
+    """
+    token = None
+    if payload:
+        token = payload.get("token") or payload.get("agent_token")
+    if not token:
+        auth_hdr = request.headers.get("Authorization", "")
+        if auth_hdr.startswith("Bearer "):
+            token = auth_hdr.split("Bearer ")[1].strip()
+    if token:
+        from app.auth.security import revoke_agent_token
+        revoke_agent_token(token)
+        print(f"[SECURITY] Revoked agent session token upon logout.")
+    return {"status": "success", "message": "Agent session token successfully revoked."}
+
 @router.post("/heartbeat")
 def receive_agent_heartbeat(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
     """
@@ -248,6 +267,8 @@ def update_telemetry_from_agent(request: Request, payload: Dict[str, Any] = Body
         db.rollback()
     db.add(act_log)
     db.commit()
+    global last_telemetry_time_by_student
+    last_telemetry_time_by_student[student_id] = now_ts
     print(f"[BACKEND] Telemetry accepted for student {student_id}")
     print(f"[DATABASE] ActivityLog inserted for student {student_id}")
 
@@ -264,42 +285,72 @@ def update_telemetry_from_agent(request: Request, payload: Dict[str, Any] = Body
         "ignored_warning_count": ent_res["ignored_warning_count"]
     }
 
+last_telemetry_time_by_student: Dict[int, float] = {}
+
 @router.get("/status")
 @router.get("/agent-status")
 def get_desktop_agent_status(
+    request: Request,
     student_id: Optional[int] = None,
     current_user: Optional[dict] = Depends(get_current_user_optional),
     db: Session = Depends(get_db)
 ):
     import time
-    global last_agent_ping_time, last_telemetry_payload
+    global last_agent_ping_time, last_telemetry_payload, last_telemetry_time_by_student
 
+    target_student_id = None
     if current_user and current_user.get("role") == "student":
-        student_id = current_user.get("user_id") or current_user.get("id") or student_id
-    if not student_id:
-        student_id = 1
+        target_student_id = current_user.get("user_id") or current_user.get("id")
 
+    auth_hdr = request.headers.get("Authorization", "")
+    if not target_student_id and auth_hdr.startswith("Bearer "):
+        bearer_tok = auth_hdr.split("Bearer ")[1].strip()
+        from app.auth.security import decode_access_token
+        acc_claim = decode_access_token(bearer_tok)
+        if acc_claim and (acc_claim.get("user_id") or acc_claim.get("id") or acc_claim.get("student_id")):
+            try:
+                target_student_id = int(acc_claim.get("user_id") or acc_claim.get("id") or acc_claim.get("student_id"))
+            except (ValueError, TypeError):
+                pass
+
+        if not target_student_id:
+            agent_claim = decode_agent_token(bearer_tok)
+            if agent_claim and agent_claim.get("student_id"):
+                try:
+                    target_student_id = int(agent_claim["student_id"])
+                except (ValueError, TypeError):
+                    pass
+
+    if not target_student_id:
+        target_student_id = student_id if student_id is not None else 1
+
+    student_id = target_student_id
+
+    now_ts = time.time()
     is_connected = False
     ping_delta = None
     if last_agent_ping_time:
-        ping_delta = round(time.time() - last_agent_ping_time, 1)
+        ping_delta = round(now_ts - last_agent_ping_time, 1)
         if ping_delta < 30.0:
             is_connected = True
 
-    # Check if student has actual telemetry logs in ActivityLog
-    has_telemetry = False
-    if is_connected:
-        if last_telemetry_payload and last_telemetry_payload.get("student_id") == student_id:
-            has_telemetry = True
-        else:
-            log_count = db.query(ActivityLog).filter(ActivityLog.student_id == student_id).count()
-            if log_count > 0:
-                has_telemetry = True
+    # Database ActivityLog is authoritative source of truth for recent telemetry receipt
+    has_recent_telemetry = False
+    latest_log = db.query(ActivityLog).filter(ActivityLog.student_id == student_id).order_by(ActivityLog.timestamp.desc()).first()
+    if latest_log and latest_log.timestamp:
+        log_age = (datetime.utcnow() - latest_log.timestamp).total_seconds()
+        if log_age < 30.0:
+            has_recent_telemetry = True
+    
+    if not has_recent_telemetry:
+        last_tx_time = last_telemetry_time_by_student.get(student_id, 0.0)
+        if (now_ts - last_tx_time) < 30.0:
+            has_recent_telemetry = True
 
     if not is_connected:
         status_text = "Inactive"
         status_label = "🔴 Monitoring Inactive"
-    elif not has_telemetry:
+    elif not has_recent_telemetry:
         status_text = "Connected"
         status_label = "🟡 Agent Connected — Awaiting Telemetry"
     else:
@@ -310,11 +361,11 @@ def get_desktop_agent_status(
 
     return {
         "connected": is_connected,
-        "telemetry_active": has_telemetry,
+        "telemetry_active": has_recent_telemetry,
         "status": status_text,
         "status_label": status_label,
         "last_ping_seconds_ago": ping_delta,
-        "current_telemetry": last_telemetry_payload,
+        "current_telemetry": last_telemetry_payload if has_recent_telemetry else {},
         "entertainment_status": ent_status
     }
 

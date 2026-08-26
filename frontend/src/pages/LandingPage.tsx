@@ -21,7 +21,7 @@ import {
   Moon
 } from 'lucide-react';
 
-import { API_BASE_URL } from '../services/api';
+import { ApiService, API_BASE_URL } from '../services/api';
 import { AgentBridgeService } from '../services/monitoringService';
 
 export const LandingPage: React.FC = () => {
@@ -38,7 +38,7 @@ export const LandingPage: React.FC = () => {
           setEngineOnline(true);
           return;
         }
-        const res = await fetch(`${API_BASE_URL}/monitoring/current-activity?student_id=1`);
+        const res = await fetch(`${API_BASE_URL}/monitoring/current-activity`, { headers: ApiService.getHeaders() });
         if (res.ok) {
           const data = await res.json();
           setEngineOnline(data.agent_connected ?? true);

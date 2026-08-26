@@ -130,6 +130,23 @@ def is_agent_running() -> bool:
 def stop_agent_process() -> bool:
     global agent_process, agent_thread_running
     agent_thread_running = False
+
+    # Revoke session on backend if token exists
+    token = os.environ.get("STUDIQ_AGENT_TOKEN", "")
+    backend_url = os.environ.get("STUDIQ_BACKEND_URL", "")
+    if token and backend_url:
+        try:
+            revoke_url = backend_url.rstrip("/").replace("/telemetry", "") + "/agent/revoke-session"
+            import requests
+            requests.post(revoke_url, json={"token": token}, headers={"Authorization": f"Bearer {token}"}, timeout=2.0)
+            log_debug("[Bridge] Session revocation request sent to backend.")
+        except Exception as e:
+            log_debug(f"[Bridge Note] Session revocation notice error: {e}")
+
+    os.environ.pop("STUDIQ_AGENT_TOKEN", None)
+    os.environ.pop("STUDIQ_STUDENT_ID", None)
+    os.environ.pop("STUDIQ_STUDENT_CODE", None)
+
     with agent_process_lock:
         if agent_process is not None:
             try:

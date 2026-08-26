@@ -31,7 +31,7 @@ import {
   X
 } from 'lucide-react';
 
-import { API_BASE_URL } from '../../services/api';
+import { ApiService, API_BASE_URL } from '../../services/api';
 import { AgentBridgeService } from '../../services/monitoringService';
 
 interface LiveTelemetryData {
@@ -114,7 +114,7 @@ export const LiveMonitoringPage: React.FC = () => {
       const bridgeStatus = await AgentBridgeService.checkBridgeStatus();
       const isBridgeActive = Boolean(bridgeStatus && (bridgeStatus.bridge_status === 'active' || bridgeStatus.agent_running || (bridgeStatus as any).running));
 
-      const res = await fetch(`${API_BASE_URL}/monitoring/current-activity?student_id=1`);
+      const res = await fetch(`${API_BASE_URL}/monitoring/current-activity`, { headers: ApiService.getHeaders() });
       if (res.ok) {
         const data: LiveTelemetryData = await res.json();
         data.agent_connected = isBridgeActive || Boolean(data.agent_connected);
