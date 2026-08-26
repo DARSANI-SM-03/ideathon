@@ -82,19 +82,12 @@ class SystemActivityCollector:
 
             for key, dom in domain_map:
                 if key in title_lower:
-                    website_url = dom
+                    if dom != "google.com":
+                        website_url = dom
                     break
 
-            # Retain non-sensitive educational topic signals in privacy-safe title if present
-            edu_topics = ["python", "java", "c++", "dsa", "leetcode", "machine learning", "ai", "tutorial", "lecture", "coding"]
-            found_topics = [t for t in edu_topics if t in title_lower]
-
             if website_url:
-                if found_topics:
-                    topic_str = " ".join(found_topics[:2]).title()
-                    anonymized_title = f"Web Activity: {topic_str} ({website_url})"
-                else:
-                    anonymized_title = f"Web Activity ({website_url})"
+                anonymized_title = f"Web Activity ({website_url})"
             else:
                 anonymized_title = "Active Web Session"
 

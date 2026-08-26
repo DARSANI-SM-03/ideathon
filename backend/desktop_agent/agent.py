@@ -196,9 +196,10 @@ def main():
         while True:
             if not os.getenv("STUDIQ_AGENT_TOKEN"):
                 try:
-                    b_url = os.getenv("STUDIQ_BACKEND_URL", "http://127.0.0.1:8000/api/v1/monitoring/telemetry")
-                    session_sync_url = b_url.rstrip("/").replace("/telemetry", "") + "/agent/active-session"
-                    s_res = requests.get(session_sync_url, timeout=2.0)
+                    import requests
+                    b_url = os.getenv("STUDIQ_BACKEND_URL", AgentConfig.BACKEND_URL)
+                    session_sync_url = b_url.rstrip("/").replace("/telemetry", "").replace("/update", "") + "/agent/active-session"
+                    s_res = requests.get(session_sync_url, timeout=3.0)
                     if s_res.ok:
                         s_data = s_res.json()
                         if s_data.get("active") and s_data.get("agent_token"):
