@@ -246,6 +246,10 @@ def update_telemetry_from_agent(request: Request, payload: Dict[str, Any] = Body
         db.commit()
     except Exception:
         db.rollback()
+    db.add(act_log)
+    db.commit()
+    print(f"[BACKEND] Telemetry accepted for student {student_id}")
+    print(f"[DATABASE] ActivityLog inserted for student {student_id}")
 
     return {
         "status": "success",
@@ -262,9 +266,19 @@ def update_telemetry_from_agent(request: Request, payload: Dict[str, Any] = Body
 
 @router.get("/status")
 @router.get("/agent-status")
-def get_desktop_agent_status(student_id: int = 1, db: Session = Depends(get_db)):
+def get_desktop_agent_status(
+    student_id: Optional[int] = None,
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db)
+):
     import time
     global last_agent_ping_time, last_telemetry_payload
+
+    if current_user and current_user.get("role") == "student":
+        student_id = current_user.get("user_id") or current_user.get("id") or student_id
+    if not student_id:
+        student_id = 1
+
     is_connected = False
     ping_delta = None
     if last_agent_ping_time:
@@ -272,12 +286,33 @@ def get_desktop_agent_status(student_id: int = 1, db: Session = Depends(get_db))
         if ping_delta < 30.0:
             is_connected = True
 
+    # Check if student has actual telemetry logs in ActivityLog
+    has_telemetry = False
+    if is_connected:
+        if last_telemetry_payload and last_telemetry_payload.get("student_id") == student_id:
+            has_telemetry = True
+        else:
+            log_count = db.query(ActivityLog).filter(ActivityLog.student_id == student_id).count()
+            if log_count > 0:
+                has_telemetry = True
+
+    if not is_connected:
+        status_text = "Inactive"
+        status_label = "🔴 Monitoring Inactive"
+    elif not has_telemetry:
+        status_text = "Connected"
+        status_label = "🟡 Agent Connected — Awaiting Telemetry"
+    else:
+        status_text = "Active"
+        status_label = "🟢 Monitoring Active"
+
     ent_status = warning_engine.get_entertainment_status(db, student_id)
 
     return {
         "connected": is_connected,
-        "status": "Active" if is_connected else "Inactive",
-        "status_label": "🟢 Monitoring Active" if is_connected else "🔴 Monitoring Inactive",
+        "telemetry_active": has_telemetry,
+        "status": status_text,
+        "status_label": status_label,
         "last_ping_seconds_ago": ping_delta,
         "current_telemetry": last_telemetry_payload,
         "entertainment_status": ent_status
@@ -371,6 +406,7 @@ def get_current_activity(
     focus_res = central_metrics_engine.calculate_focus_index(db, student_id, 24.0)
     burnout_res = central_metrics_engine.calculate_burnout_risk(db, student_id, 24.0)
 
+    print(f"[DASHBOARD] Current activity returned for student {student_id}: {app_name}")
     return {
         "current_application": app_name,
         "window_title": window_title,

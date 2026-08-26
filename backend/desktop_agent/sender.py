@@ -72,7 +72,9 @@ class TelemetrySender:
             payload_to_send["agent_token"] = token
 
         try:
-            res = requests.post(self.backend_url, json=payload_to_send, headers=headers, timeout=1.5)
+            print(f"[SENDER] POST {self.backend_url}")
+            res = requests.post(self.backend_url, json=payload_to_send, headers=headers, timeout=5.0)
+            print(f"[SENDER] HTTP {res.status_code}")
             if res.status_code in (200, 201):
                 self.flush_offline_queue()
                 try:
@@ -80,11 +82,11 @@ class TelemetrySender:
                 except Exception:
                     return True, {}
             else:
-                print(f"[Agent Sender] Server returned status {res.status_code}. Queueing payload offline.")
+                print(f"[SENDER] Server returned HTTP {res.status_code}. Queueing payload offline.")
                 self.queue_offline_payload(payload_to_send)
                 return False, {}
         except Exception as err:
-            print(f"[Agent Sender] Offline / Connection Note ({err}). Queueing telemetry payload offline.")
+            print(f"[SENDER] Connection error ({err}). Queueing telemetry payload offline.")
             self.queue_offline_payload(payload_to_send)
             return False, {}
 
