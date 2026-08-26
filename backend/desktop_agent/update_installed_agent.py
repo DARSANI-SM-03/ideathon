@@ -56,5 +56,8 @@ def update_installed_agent():
         print(f"SUCCESS: Updated installed executable at '{installed_exe}'")
         print(f"File Size: {os.path.getsize(installed_exe)} bytes")
 
+def update_agent_executable():
+    return update_installed_agent()
+
 if __name__ == "__main__":
     update_installed_agent()

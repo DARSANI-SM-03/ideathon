@@ -37,7 +37,7 @@ def start_live_telemetry_monitor():
 
     print("[INIT] Verifying and updating installed executable in %LOCALAPPDATA%\\StudIQ\\Agent...")
     import update_installed_agent
-    update_installed_agent.update_agent_executable()
+    update_installed_agent.update_installed_agent()
 
     appdata = os.getenv("LOCALAPPDATA", "")
     exe_path = os.path.join(appdata, "StudIQ", "Agent", "StudIQAgent.exe")
