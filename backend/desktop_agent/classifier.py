@@ -1,15 +1,18 @@
 """
 Real-time AI Context Classification Engine for StudIQ Desktop Agent.
-Performs asynchronous, non-blocking AI contextual classification on safe metadata,
-caching results by content identifier (e.g. YouTube Video ID or URL hash),
-calculating Productivity, Focus, and Distraction scores, and supporting offline retry queuing.
+Performs asynchronous, non-blocking AI contextual classification on safe metadata via
+the backend OpenAI classification endpoint (POST /api/v1/monitoring/classify-context).
+Maintains zero OpenAI API key exposure in desktop agent binaries, caches results by
+content identifier (e.g. YouTube Video ID or URL hash), calculates Productivity,
+Focus, and Distraction scores, and falls back seamlessly to local deterministic rules.
 """
 
 import re
 import time
 import logging
 import json
-import threading
+import urllib.request
+import urllib.error
 from concurrent.futures import ThreadPoolExecutor
 from typing import Tuple, List, Dict, Optional, Any
 
@@ -141,7 +144,7 @@ class ActivityClassifier:
         self._cache: Dict[str, Dict[str, Any]] = {}
         self.cache_ttl = cache_ttl
         self.executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="AIClassifierThread")
-        self.retry_queue: List[Dict[str, Any]] = []
+        self.pending_requests: Dict[str, float] = {}
 
     def extract_domain(self, url: str, title: str = "") -> str:
         target = (url or "").strip().lower()
@@ -215,12 +218,8 @@ class ActivityClassifier:
         else:
             return (0.50, 0.50, 0.50)
 
-    def _evaluate_context_ai(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        AI Context Classification Engine.
-        Evaluates payload safe metadata (app, domain, url, title, video ID)
-        to produce structured AI classification.
-        """
+    def _evaluate_local_fallback(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Local rule-based classification fallback."""
         domain = payload.get("domain", "")
         title = payload.get("page_title", "")
         t_lower = title.lower()
@@ -238,103 +237,65 @@ class ActivityClassifier:
         coding_kws = ["python", "java", "c++", "dsa", "leetcode", "data structures", "algorithms", "coding", "programming", "github", "compiler", "full course", "web development", "react", "sql", "system design", "computer science"]
         edu_kws = ["tutorial", "lecture", "machine learning", "deep learning", "ai", "opencourseware", "nptel", "coursera", "udemy", "lesson", "exam", "study", "learn", "how to solve"]
         ent_kws = ["funny", "meme", "memes", "song", "music video", "official video", "trailer", "gameplay", "movie", "vlog", "prank", "comedy", "compilation", "kannukulla", "nallaru po"]
-        research_kws = ["wiki", "wikipedia", "arxiv", "paper", "journal", "documentation", "research", "scholar"]
-        social_kws = ["feed", "reels", "shorts", "post", "tweet", "timeline", "instagram", "facebook", "reddit"]
 
         category = "Unknown"
         subcategory = "General"
         confidence = 0.50
-        reason = "Contextual analysis"
 
         if domain == "youtube.com":
             if has_kw(focus_music_kws):
                 category = "Productivity"
                 subcategory = "Focus Music"
                 confidence = 0.93
-                reason = "Focus and background study audio content"
             elif has_kw(coding_kws) or has_kw(edu_kws):
                 category = "Education"
                 subcategory = "Programming" if has_kw(coding_kws) else "Academic"
                 confidence = 0.98 if has_kw(coding_kws) else 0.95
-                reason = "Programming course/tutorial content"
             elif has_kw(ent_kws):
                 category = "Entertainment"
                 subcategory = "Comedy / Music"
                 confidence = 0.94
-                reason = "Entertainment or music video content"
             else:
                 category = "Entertainment"
                 subcategory = "General Video"
                 confidence = 0.90
-                reason = "General YouTube video"
 
         elif domain == "chatgpt.com":
             if has_kw(coding_kws):
                 category = "Coding/Technical"
                 subcategory = "AI Assistant"
                 confidence = 0.92
-                reason = "Coding assistance via AI"
             elif has_kw(edu_kws):
                 category = "Education"
                 subcategory = "AI Assistant"
                 confidence = 0.90
-                reason = "Educational query via AI"
             else:
                 category = "Other"
                 subcategory = "AI Assistant"
                 confidence = 0.85
-                reason = "AI Assistant usage (privacy preserved, conversation un-scraped)"
 
-        elif domain in ["reddit.com", "x.com", "twitter.com", "facebook.com", "instagram.com", "linkedin.com"]:
-            if has_kw(coding_kws):
-                category = "Coding/Technical"
-                subcategory = "Tech Community"
-                confidence = 0.90
-                reason = "Technical community discussion"
-            else:
-                category = "Social Media"
-                subcategory = "Feed"
-                confidence = 0.92
-                reason = "Social media feed activity"
-
-        elif domain == "google.com":
-            if has_kw(coding_kws) or has_kw(edu_kws):
-                category = "Research"
-                subcategory = "Academic Search"
-                confidence = 0.90
-                reason = "Academic or coding query"
-            else:
-                category = "Other"
-                subcategory = "Web Search"
-                confidence = 0.75
-                reason = "General web search"
+        elif domain in ["reddit.com", "x.com", "twitter.com", "facebook.com", "instagram.com"]:
+            category = "Social Media"
+            subcategory = "Feed"
+            confidence = 0.92
 
         else:
             if has_kw(focus_music_kws):
                 category = "Productivity"
                 subcategory = "Focus Music"
                 confidence = 0.93
-                reason = "Focus music content"
             elif has_kw(coding_kws):
                 category = "Coding/Technical"
                 subcategory = "Development"
                 confidence = 0.90
-                reason = "Development content"
             elif has_kw(edu_kws):
                 category = "Education"
                 subcategory = "Learning"
                 confidence = 0.90
-                reason = "Educational learning material"
             elif has_kw(ent_kws):
                 category = "Entertainment"
                 subcategory = "Media"
                 confidence = 0.90
-                reason = "Media entertainment"
-            else:
-                category = "Unknown"
-                subcategory = "General Browsing"
-                confidence = 0.50
-                reason = "Unrecognized activity"
 
         prod_score, focus_score, dist_score = self._calculate_scores(category, subcategory)
 
@@ -345,8 +306,92 @@ class ActivityClassifier:
             "productivity_score": prod_score,
             "focus_score": focus_score,
             "distraction_score": dist_score,
-            "reason": reason
+            "reason": "Local heuristic fallback classification",
+            "provider": "LocalFallback",
+            "status": "FALLBACK"
         }
+
+    def _fetch_remote_backend_ai_classification(
+        self,
+        cache_key: str,
+        payload: Dict[str, Any],
+        agent_token: Optional[str] = None,
+        backend_url: str = "https://studiq-backend.onrender.com/api/v1"
+    ):
+        """
+        Background task to call backend /api/v1/monitoring/classify-context.
+        Updates self._cache upon completion.
+        """
+        endpoint = f"{backend_url.rstrip('/')}/monitoring/classify-context"
+        req_payload = dict(payload)
+        if agent_token:
+            req_payload["agent_token"] = agent_token
+
+        try:
+            req_bytes = json.dumps(req_payload).encode("utf-8")
+            headers = {"Content-Type": "application/json"}
+            if agent_token:
+                headers["Authorization"] = f"Bearer {agent_token}"
+
+            req = urllib.request.Request(endpoint, data=req_bytes, headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=4.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+
+            if data and "category" in data:
+                cat = data.get("category", "Unknown")
+                sub = data.get("subcategory", "General")
+                conf = float(data.get("confidence", 0.90))
+                p_score = float(data.get("productivity_score", 0.50))
+                f_score = float(data.get("focus_score", 0.50))
+                d_score = float(data.get("distraction_score", 0.50))
+                provider = data.get("provider", "OpenAI")
+                status = data.get("status", "SUCCESS")
+                model = data.get("model", "gpt-4o-mini")
+
+                res = {
+                    "domain": payload.get("domain", "N/A"),
+                    "context_required": True,
+                    "page_title": payload.get("page_title", "N/A"),
+                    "classification_method": f"AI Context Classification ({provider})",
+                    "category": cat,
+                    "subcategory": sub,
+                    "confidence": conf,
+                    "confidence_level": "HIGH" if conf >= 0.85 else "MEDIUM" if conf >= 0.60 else "LOW",
+                    "productivity_score": p_score,
+                    "focus_score": f_score,
+                    "distraction_score": d_score,
+                    "matched_rule": f"Remote {provider} AI Model",
+                    "matched_signal": payload.get("domain", ""),
+                    "provider": provider,
+                    "status": status,
+                    "model": model
+                }
+
+                self._cache[cache_key] = {
+                    "cached_at": time.time(),
+                    "data": res
+                }
+
+                logger.info(
+                    f"[AI CLASSIFIER]\n"
+                    f"Provider: {provider}\n"
+                    f"Status: {status}\n"
+                    f"Model: {model}\n"
+                    f"Application: {payload.get('application')}\n"
+                    f"Domain: {payload.get('domain') or 'N/A'}\n"
+                    f"Page Title: {payload.get('page_title') or 'N/A'}\n"
+                    f"Category: {cat}\n"
+                    f"Subcategory: {sub}\n"
+                    f"Confidence: {conf:.2f}\n"
+                    f"Productivity Score: {p_score:.2f}\n"
+                    f"Focus Score: {f_score:.2f}\n"
+                    f"Distraction Score: {d_score:.2f}\n"
+                    f"Cache: MISS (Async Updated)"
+                )
+        except Exception as e:
+            logger.debug(f"Remote backend classification fallback: {str(e)}")
+        finally:
+            self.pending_requests.pop(cache_key, None)
 
     def classify_with_context(
         self,
@@ -354,10 +399,12 @@ class ActivityClassifier:
         window_title: str = "",
         website_url: str = "",
         whitelisted_apps: Optional[List[str]] = None,
-        active_duration_seconds: int = 5
+        active_duration_seconds: int = 5,
+        agent_token: Optional[str] = None,
+        backend_url: str = "https://studiq-backend.onrender.com/api/v1"
     ) -> Dict[str, Any]:
         """
-        Main entrypoint for structured real-time AI Context Classification.
+        Main entrypoint for non-blocking real-time AI Context Classification.
         """
         app = (app_name or "").strip().lower()
         title = (window_title or "").strip()
@@ -368,13 +415,22 @@ class ActivityClassifier:
         cache_key = f"{video_id}" if video_id else f"{domain}:{title.lower()}"
         now = time.time()
 
-        # Check TTL Cache
+        # 1. Check Cache
         if cache_key and cache_key in self._cache:
             entry = self._cache[cache_key]
-            if now - entry["cached_at"] < self.cache_ttl:
+            elapsed = now - entry["cached_at"]
+            if elapsed < self.cache_ttl:
                 res = dict(entry["data"])
-                res["classification_method"] = "AI Context Classification (Cached)"
-                self._log_ai_classifier(res, app, domain, title)
+                res["classification_method"] = f"AI Context Classification (Cached)"
+                ttl_rem = int(self.cache_ttl - elapsed)
+
+                logger.info(
+                    f"[AI CLASSIFIER]\n"
+                    f"Status: CACHE_HIT\n"
+                    f"Content: {video_id or cache_key}\n"
+                    f"Category: {res['category']}\n"
+                    f"Cache TTL Remaining: {ttl_rem}s"
+                )
                 return res
 
         context_required = domain in self.AMBIGUOUS_PLATFORMS
@@ -383,9 +439,9 @@ class ActivityClassifier:
         category = "Unknown"
         subcategory = "General"
         confidence = 0.50
-        classification_method = "AI Context Classification"
+        classification_method = "Stage 1 Deterministic Rule"
 
-        # Stage 1: Deterministic Local Fast Check
+        # Stage 1: Fast Local Deterministic Rules
         if whitelisted_apps:
             combined = f"{app} {title.lower()} {url}"
             for w_app in whitelisted_apps:
@@ -394,7 +450,6 @@ class ActivityClassifier:
                     subcategory = "Parent Whitelist"
                     confidence = 0.99
                     context_required = False
-                    classification_method = "Stage 1 Deterministic Rule"
 
         if not context_required and category == "Unknown":
             if not is_browser and app:
@@ -403,7 +458,6 @@ class ActivityClassifier:
                         category = cat
                         subcategory = sub
                         confidence = conf
-                        classification_method = "Stage 1 Deterministic Rule"
                         break
 
             if category == "Unknown" and domain in self.DOMAIN_MAP:
@@ -411,26 +465,42 @@ class ActivityClassifier:
                 category = cat
                 subcategory = sub
                 confidence = conf
-                classification_method = "Stage 1 Deterministic Rule"
 
-        # Stage 2: AI Context Evaluation for Ambiguous Platforms / Unknown Activities
+        # Calculate immediate local result (never block telemetry polling)
+        local_ai = self._evaluate_local_fallback({
+            "application": app_name,
+            "domain": domain,
+            "page_title": title,
+            "url": url
+        })
+
         if context_required or category == "Unknown":
-            ai_payload = {
-                "application": app_name,
-                "browser": "Chrome" if is_browser else app_name,
-                "domain": domain,
-                "url": url if url else f"https://{domain}" if domain else "",
-                "page_title": title,
-                "active_duration_seconds": active_duration_seconds
-            }
+            category = local_ai["category"]
+            subcategory = local_ai["subcategory"]
+            confidence = local_ai["confidence"]
+            prod_score = local_ai["productivity_score"]
+            focus_score = local_ai["focus_score"]
+            dist_score = local_ai["distraction_score"]
+            classification_method = "AI Context Classification (Local Fallback)"
 
-            ai_res = self._evaluate_context_ai(ai_payload)
-            category = ai_res["category"]
-            subcategory = ai_res["subcategory"]
-            confidence = ai_res["confidence"]
-            prod_score = ai_res["productivity_score"]
-            focus_score = ai_res["focus_score"]
-            dist_score = ai_res["distraction_score"]
+            # Dispatch background async request to backend OpenAI API
+            if cache_key and cache_key not in self.pending_requests:
+                self.pending_requests[cache_key] = now
+                ai_payload = {
+                    "application": app_name,
+                    "browser": "Chrome" if is_browser else app_name,
+                    "domain": domain,
+                    "url": url if url else f"https://{domain}" if domain else "",
+                    "page_title": title,
+                    "active_duration_seconds": active_duration_seconds
+                }
+                self.executor.submit(
+                    self._fetch_remote_backend_ai_classification,
+                    cache_key,
+                    ai_payload,
+                    agent_token,
+                    backend_url
+                )
         else:
             prod_score, focus_score, dist_score = self._calculate_scores(category, subcategory)
 
@@ -455,38 +525,22 @@ class ActivityClassifier:
             "focus_score": focus_score,
             "distraction_score": dist_score,
             "matched_rule": classification_method,
-            "matched_signal": domain if domain else app
+            "matched_signal": domain if domain else app,
+            "provider": local_ai.get("provider", "LocalFallback"),
+            "status": local_ai.get("status", "FALLBACK")
         }
 
-        # Update Cache
-        if cache_key:
+        # Populate cache with initial fallback
+        if cache_key and cache_key not in self._cache:
             self._cache[cache_key] = {
                 "cached_at": now,
                 "data": res
             }
 
-        self._log_ai_classifier(res, app, domain, title)
         return res
 
-    def _log_ai_classifier(self, res: Dict[str, Any], app: str, domain: str, title: str):
-        """Prints exact structured [AI CLASSIFIER] logs."""
-        log_lines = [
-            "[AI CLASSIFIER]",
-            f"Application: {app}",
-            f"Domain: {domain or 'N/A'}",
-            f"Page Title: {title or 'N/A'}",
-            f"Classification Method: {res['classification_method']}",
-            f"Category: {res['category']}",
-            f"Subcategory: {res['subcategory']}",
-            f"Confidence: {res['confidence']:.2f}",
-            f"Productivity Score: {res['productivity_score']:.2f}",
-            f"Focus Score: {res['focus_score']:.2f}",
-            f"Distraction Score: {res['distraction_score']:.2f}"
-        ]
-        logger.info("\n".join(log_lines))
-
     def _map_to_legacy_category(self, primary_cat: str) -> str:
-        """Maps taxonomy category to legacy string for backward compatibility if needed."""
+        """Maps taxonomy category to legacy string for backward compatibility."""
         mapping = {
             "Education": "Educational",
             "Coding/Technical": "Development",

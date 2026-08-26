@@ -198,6 +198,36 @@ def receive_agent_heartbeat(payload: Dict[str, Any] = Body(...), db: Session = D
         "message": "Heartbeat received successfully."
     }
 
+@router.post("/classify-context")
+def classify_context_endpoint(request: Request, payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+    """
+    Internal authenticated endpoint for Desktop Agent to request real-time OpenAI context classification.
+    Verifies agent JWT token. Keeps OpenAI API key securely on backend server.
+    """
+    from app.services.ai_classifier_service import classify_context_with_openai
+
+    # Verify Agent JWT Token
+    agent_token = payload.get("agent_token") or payload.get("token")
+    if not agent_token:
+        auth_hdr = request.headers.get("Authorization", "")
+        if auth_hdr.startswith("Bearer "):
+            agent_token = auth_hdr.split("Bearer ")[1].strip()
+
+    if not agent_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized: Valid agent session token required for AI classification."
+        )
+
+    decoded_claim = decode_agent_token(agent_token)
+    if not decoded_claim or not decoded_claim.get("student_id"):
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized: Invalid or expired agent session token."
+        )
+
+    return classify_context_with_openai(payload)
+
 @router.post("/update")
 @router.post("/telemetry")
 def update_telemetry_from_agent(request: Request, payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
