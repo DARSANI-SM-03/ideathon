@@ -29,7 +29,7 @@ import {
 import { Modal } from '../components/Modal';
 
 export const LoginPage: React.FC = () => {
-  const { continueAuth, setSessionTokens } = useAuth();
+  const { continueAuth, setSessionTokens, isAuthenticated, user } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -72,6 +72,23 @@ export const LoginPage: React.FC = () => {
   const [newResetPassword, setNewResetPassword] = useState('');
   const [resetStage, setResetStage] = useState<'request' | 'reset'>('request');
 
+  const getRedirectPath = (r: UserRole) => {
+    switch (r) {
+      case 'parent': return '/parent/dashboard';
+      case 'mentor': return '/mentor/dashboard';
+      case 'teacher': return '/teacher/dashboard';
+      case 'admin': return '/admin/dashboard';
+      default: return '/student/dashboard';
+    }
+  };
+
+  // Redirect if session is already active
+  useEffect(() => {
+    if (isAuthenticated && user && user.role) {
+      navigate(getRedirectPath(user.role), { replace: true });
+    }
+  }, [isAuthenticated, user, navigate]);
+
   const handleRoleChange = (newRole: UserRole) => {
     setRole(newRole);
     setSearchParams({ role: newRole }, { replace: true });
@@ -90,16 +107,6 @@ export const LoginPage: React.FC = () => {
     setErrorMsg('');
     setSuccessMsg('');
   }, [role, stage]);
-
-  const getRedirectPath = (r: UserRole) => {
-    switch (r) {
-      case 'parent': return '/parent/dashboard';
-      case 'mentor': return '/mentor/dashboard';
-      case 'teacher': return '/teacher/dashboard';
-      case 'admin': return '/admin/dashboard';
-      default: return '/student/dashboard';
-    }
-  };
 
   // Unified Continue Action
   const handleContinue = async (e: React.FormEvent) => {
@@ -250,8 +257,12 @@ export const LoginPage: React.FC = () => {
         }
       } else {
         const detail = resData.detail || '';
-        if (detail.includes('already registered') || detail.includes('already exists')) {
-          setErrorMsg('An account with this ID or Email already exists.');
+        if (detail.includes('ACCOUNT_ALREADY_EXISTS') || detail.includes('already registered') || detail.includes('already exists')) {
+          setErrorMsg('An account with these details already exists. Please sign in.');
+          setStage('initial');
+          if (regEmail) setIdentifier(regEmail);
+          else if (studentId) setIdentifier(studentId);
+          else if (employeeId) setIdentifier(employeeId);
         } else {
           setErrorMsg(detail || 'Registration failed. Please check your details and try again.');
         }

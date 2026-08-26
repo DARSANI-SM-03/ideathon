@@ -21,8 +21,10 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 @router.post("/continue")
 def continue_auth(request: ContinueAuthRequest, db: Session = Depends(get_db)):
+    from sqlalchemy import func
     role = request.role.lower()
     user_identifier = request.user_identifier.strip()
+    ident_lower = user_identifier.lower()
     password = request.password
 
     if not user_identifier or not password:
@@ -33,13 +35,13 @@ def continue_auth(request: ContinueAuthRequest, db: Session = Depends(get_db)):
 
     if role == "student":
         user_obj = db.query(Student).filter(
-            (Student.student_id == user_identifier) | (Student.email == user_identifier)
+            (func.lower(Student.student_id) == ident_lower) | (func.lower(Student.email) == ident_lower)
         ).first()
         if user_obj:
             account_found = True
     elif role == "admin":
         user_obj = db.query(Admin).filter(
-            (Admin.username == user_identifier) | (Admin.email == user_identifier)
+            (func.lower(Admin.username) == ident_lower) | (func.lower(Admin.email) == ident_lower)
         ).first()
         if user_obj:
             account_found = True
@@ -50,24 +52,41 @@ def continue_auth(request: ContinueAuthRequest, db: Session = Depends(get_db)):
             )
     elif role == "mentor":
         user_obj = db.query(Mentor).filter(
-            (Mentor.employee_id == user_identifier) | (Mentor.email == user_identifier)
+            (func.lower(Mentor.employee_id) == ident_lower) | (func.lower(Mentor.email) == ident_lower)
         ).first()
         if user_obj:
             account_found = True
     elif role == "teacher":
         user_obj = db.query(Teacher).filter(
-            (Teacher.teacher_id == user_identifier) | (Teacher.email == user_identifier)
+            (func.lower(Teacher.teacher_id) == ident_lower) | (func.lower(Teacher.email) == ident_lower)
         ).first()
         if user_obj:
             account_found = True
     elif role == "parent":
-        user_obj = db.query(Parent).filter(Parent.email == user_identifier).first()
+        user_obj = db.query(Parent).filter(func.lower(Parent.email) == ident_lower).first()
         if user_obj:
             account_found = True
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported role '{role}'")
 
+    # Cross-role lookup check if account was not found in the selected role tab
     if not account_found or not user_obj:
+        other_role = None
+        if db.query(Student).filter((func.lower(Student.student_id) == ident_lower) | (func.lower(Student.email) == ident_lower)).first():
+            other_role = "Student"
+        elif db.query(Parent).filter(func.lower(Parent.email) == ident_lower).first():
+            other_role = "Parent"
+        elif db.query(Mentor).filter((func.lower(Mentor.employee_id) == ident_lower) | (func.lower(Mentor.email) == ident_lower)).first():
+            other_role = "Mentor"
+        elif db.query(Teacher).filter((func.lower(Teacher.teacher_id) == ident_lower) | (func.lower(Teacher.email) == ident_lower)).first():
+            other_role = "Teacher"
+
+        if other_role:
+            raise HTTPException(
+                status_code=400,
+                detail=f"An account with this ID or Email exists as a {other_role}. Please select the {other_role} tab to sign in."
+            )
+
         return {
             "status": "registration_required",
             "role": role,
@@ -79,7 +98,7 @@ def continue_auth(request: ContinueAuthRequest, db: Session = Depends(get_db)):
     if not verify_password(password, user_obj.password_hash):
         raise HTTPException(
             status_code=401,
-            detail="Invalid credentials. Please check your ID/email and password."
+            detail="Incorrect password. Please check your password and try again."
         )
 
     # Determine user identifier string
@@ -127,22 +146,29 @@ def continue_auth(request: ContinueAuthRequest, db: Session = Depends(get_db)):
 
 @router.post("/register/student")
 def register_student(req: StudentRegisterRequest, db: Session = Depends(get_db)):
+    from sqlalchemy import func
+    sid_lower = req.student_id.strip().lower()
+    email_lower = req.email.strip().lower()
+
     existing = db.query(Student).filter(
-        (Student.student_id == req.student_id) | (Student.email == req.email)
+        (func.lower(Student.student_id) == sid_lower) | (func.lower(Student.email) == email_lower)
     ).first()
     if existing:
-        raise HTTPException(status_code=400, detail="Student with this ID or email already registered.")
+        raise HTTPException(
+            status_code=400,
+            detail="ACCOUNT_ALREADY_EXISTS: An account with this Student ID or Email already exists. Please sign in."
+        )
 
     new_student = Student(
-        student_id=req.student_id,
-        full_name=req.full_name,
-        name=req.full_name,
-        email=req.email,
+        student_id=req.student_id.strip(),
+        full_name=req.full_name.strip(),
+        name=req.full_name.strip(),
+        email=req.email.strip(),
         department=req.department,
         semester=req.semester,
         password_hash=get_password_hash(req.password),
-        parent_email=req.parent_email,
-        parent_phone=req.parent_phone,
+        parent_email=req.parent_email.strip() if req.parent_email else "",
+        parent_phone=req.parent_phone.strip() if req.parent_phone else "",
         status="Active",
         monitoring_authorized=True,
         onboarding_completed=True
@@ -154,19 +180,19 @@ def register_student(req: StudentRegisterRequest, db: Session = Depends(get_db))
     # Create Parent Approval Request Record
     approval_req = ParentApprovalRequest(
         student_id=new_student.id,
-        student_name=req.full_name,
-        student_code=req.student_id,
+        student_name=req.full_name.strip(),
+        student_code=req.student_id.strip(),
         college_name=req.college_name or "Global Institute of Technology",
         department=req.department,
-        parent_email=req.parent_email,
-        parent_phone=req.parent_phone,
+        parent_email=req.parent_email.strip() if req.parent_email else "",
+        parent_phone=req.parent_phone.strip() if req.parent_phone else "",
         status="Approved"
     )
     db.add(approval_req)
     db.commit()
 
     # Notify Parent if parent account exists
-    parent = db.query(Parent).filter(Parent.email == req.parent_email).first() or db.query(Parent).first()
+    parent = db.query(Parent).filter(func.lower(Parent.email) == (req.parent_email.strip().lower() if req.parent_email else "")).first()
     if parent:
         notif = Notification(
             student_id=new_student.id,
@@ -203,17 +229,23 @@ def register_student(req: StudentRegisterRequest, db: Session = Depends(get_db))
 
 @router.post("/register/parent")
 def register_parent(req: ParentRegisterRequest, db: Session = Depends(get_db)):
-    existing = db.query(Parent).filter(Parent.email == req.email).first()
+    from sqlalchemy import func
+    email_lower = req.email.strip().lower()
+
+    existing = db.query(Parent).filter(func.lower(Parent.email) == email_lower).first()
     if existing:
-        raise HTTPException(status_code=400, detail="Parent account with this email already exists.")
+        raise HTTPException(
+            status_code=400,
+            detail="ACCOUNT_ALREADY_EXISTS: An account with this Email already exists. Please sign in."
+        )
 
     parent_id = f"PAR-{int(datetime.utcnow().timestamp())}"
     new_parent = Parent(
         parent_id=parent_id,
-        full_name=req.full_name,
-        name=req.full_name,
-        email=req.email,
-        phone=req.phone,
+        full_name=req.full_name.strip(),
+        name=req.full_name.strip(),
+        email=req.email.strip(),
+        phone=req.phone.strip() if req.phone else "",
         password_hash=get_password_hash(req.password)
     )
     db.add(new_parent)
