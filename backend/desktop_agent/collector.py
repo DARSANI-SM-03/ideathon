@@ -37,42 +37,80 @@ class SystemActivityCollector:
     def sanitize_and_abstract_window_title(self, app_name: str, raw_title: str) -> tuple:
         """
         Privacy-by-Design: Evaluates raw window title locally on the device to extract
-        domain/category, but NEVER exposes or transmits the raw title containing PII.
-        Returns (anonymized_title, website_url).
+        domain/category signals, but NEVER exposes or transmits PII or raw sensitive titles.
+        Returns (privacy_safe_title, website_url).
         """
-        appName_lower = app_name.lower()
-        title_lower = raw_title.lower() if raw_title else ""
+        appName_lower = (app_name or "").lower()
+        title_lower = (raw_title or "").lower()
         website_url = ""
 
         # Extract domain locally from browser title
         if any(b in appName_lower for b in ["chrome", "edge", "firefox", "brave", "opera"]):
-            if "youtube" in title_lower:
-                website_url = "youtube.com"
-            elif "leetcode" in title_lower:
-                website_url = "leetcode.com"
-            elif "arxiv" in title_lower:
-                website_url = "arxiv.org"
-            elif "coursera" in title_lower:
-                website_url = "coursera.org"
-            elif "github" in title_lower:
-                website_url = "github.com"
-            elif "instagram" in title_lower:
-                website_url = "instagram.com"
-            elif "netflix" in title_lower:
-                website_url = "netflix.com"
-            elif "amazon" in title_lower:
-                website_url = "amazon.com"
+            domain_map = [
+                ("youtube", "youtube.com"),
+                ("youtu.be", "youtube.com"),
+                ("github", "github.com"),
+                ("leetcode", "leetcode.com"),
+                ("hackerrank", "hackerrank.com"),
+                ("coursera", "coursera.org"),
+                ("udemy", "udemy.com"),
+                ("edx", "edx.org"),
+                ("khan academy", "khanacademy.org"),
+                ("khanacademy", "khanacademy.org"),
+                ("geeksforgeeks", "geeksforgeeks.org"),
+                ("w3schools", "w3schools.com"),
+                ("nptel", "nptel.ac.in"),
+                ("stackoverflow", "stackoverflow.com"),
+                ("stack overflow", "stackoverflow.com"),
+                ("wikipedia", "wikipedia.org"),
+                ("arxiv", "arxiv.org"),
+                ("instagram", "instagram.com"),
+                ("facebook", "facebook.com"),
+                ("reddit", "reddit.com"),
+                ("twitter", "twitter.com"),
+                ("x.com", "x.com"),
+                ("linkedin", "linkedin.com"),
+                ("netflix", "netflix.com"),
+                ("spotify", "spotify.com"),
+                ("twitch", "twitch.tv"),
+                ("amazon", "amazon.com"),
+                ("flipkart", "flipkart.com"),
+                ("google", "google.com"),
+                ("bing", "bing.com"),
+                ("duckduckgo", "duckduckgo.com"),
+            ]
+
+            for key, dom in domain_map:
+                if key in title_lower:
+                    website_url = dom
+                    break
+
+            # Retain non-sensitive educational topic signals in privacy-safe title if present
+            edu_topics = ["python", "java", "c++", "dsa", "leetcode", "machine learning", "ai", "tutorial", "lecture", "coding"]
+            found_topics = [t for t in edu_topics if t in title_lower]
 
             if website_url:
-                anonymized_title = f"Web Activity ({website_url})"
+                if found_topics:
+                    topic_str = " ".join(found_topics[:2]).title()
+                    anonymized_title = f"Web Activity: {topic_str} ({website_url})"
+                else:
+                    anonymized_title = f"Web Activity ({website_url})"
             else:
                 anonymized_title = "Active Web Session"
-        elif "code" in appName_lower or "devenv" in appName_lower or "idea" in appName_lower:
+
+        elif "code" in appName_lower or "devenv" in appName_lower or "idea" in appName_lower or "pycharm" in appName_lower or "eclipse" in appName_lower:
             anonymized_title = "Active IDE / Coding Work"
-        elif "word" in appName_lower or "excel" in appName_lower or "powerpnt" in appName_lower:
+        elif "word" in appName_lower or "excel" in appName_lower or "powerpnt" in appName_lower or "onenote" in appName_lower or "notepad" in appName_lower:
             anonymized_title = "Document Editing"
-        elif "teams" in appName_lower or "slack" in appName_lower or "zoom" in appName_lower:
+        elif "teams" in appName_lower or "slack" in appName_lower or "zoom" in appName_lower or "discord" in appName_lower or "outlook" in appName_lower:
             anonymized_title = "Communication & Collaboration"
+        elif "cmd" in appName_lower or "powershell" in appName_lower or "terminal" in appName_lower:
+            if any(t in title_lower for t in ["python", "node", "git", "npm", "docker", "studiq"]):
+                anonymized_title = "Development Terminal Work"
+            else:
+                anonymized_title = "System Command Prompt"
+        elif "explorer" in appName_lower or "taskmgr" in appName_lower or "settings" in appName_lower:
+            anonymized_title = f"System {app_name} Work"
         else:
             anonymized_title = f"Active {app_name} Session"
 

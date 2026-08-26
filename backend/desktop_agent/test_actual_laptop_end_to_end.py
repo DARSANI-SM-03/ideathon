@@ -84,64 +84,105 @@ def run_laptop_acceptance_test():
     }, timeout=3.0)
     print(f"   Local Bridge POST /start Response: {start_res_a.json()}")
 
-    # --- TEST 1: CHROME ---
-    payload_chrome = {
+    # --- TEST 1: CHROME + YOUTUBE ---
+    payload_youtube = {
         "agent_token": agent_token_a,
         "student_id": student_a_id,
         "student_code": student_a_code,
         "application_name": "chrome.exe",
-        "window_title": "Active Web Session",
-        "category": "Educational",
-        "confidence": 0.95,
-        "duration_seconds": 15,
+        "window_title": "Web Activity (youtube.com)",
+        "website_url": "youtube.com",
+        "category": "Entertainment",
+        "confidence": 0.90,
+        "duration_seconds": 5,
         "idle_seconds": 0.1,
-        "session_duration_seconds": 15,
+        "session_duration_seconds": 5,
         "running_apps_count": 5,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     }
-    tx_chrome = client.post("/api/v1/monitoring/telemetry", json=payload_chrome)
-    log_chrome = db.query(ActivityLog).filter(ActivityLog.student_id == student_a_id).order_by(ActivityLog.id.desc()).first()
-    curr_chrome = client.get("/api/v1/monitoring/current-activity", headers=headers_a).json()
+    tx_youtube = client.post("/api/v1/monitoring/telemetry", json=payload_youtube)
+    log_youtube = db.query(ActivityLog).filter(ActivityLog.student_id == student_a_id).order_by(ActivityLog.id.desc()).first()
+    curr_youtube = client.get("/api/v1/monitoring/current-activity", headers=headers_a).json()
 
-    print(f"\n9.  Chrome Detection Evidence   : App='chrome.exe', Title='Active Web Session'")
-    print(f"10. Chrome Backend Receipt      : HTTP {tx_chrome.status_code} | DB Row ID={log_chrome.id if log_chrome else 'None'}")
-    print(f"11. Chrome Dashboard UI State   : App='{curr_chrome.get('current_application')}' | Title='{curr_chrome.get('window_title')}'")
-    assert curr_chrome.get('current_application') == 'chrome.exe'
+    print(f"\n9.  Chrome YouTube Evidence     : App='chrome.exe', URL='youtube.com', Category='Entertainment'")
+    print(f"10. YouTube Backend Receipt     : HTTP {tx_youtube.status_code} | DB Row ID={log_youtube.id if log_youtube else 'None'}")
+    assert curr_youtube.get('current_application') == 'chrome.exe'
 
-    # --- TEST 2: VS CODE ---
-    payload_vscode = dict(payload_chrome)
+    # --- TEST 2: CHROME + GITHUB ---
+    payload_github = dict(payload_youtube)
+    payload_github["window_title"] = "Web Activity (github.com)"
+    payload_github["website_url"] = "github.com"
+    payload_github["category"] = "Development"
+    payload_github["confidence"] = 0.95
+
+    tx_github = client.post("/api/v1/monitoring/telemetry", json=payload_github)
+    log_github = db.query(ActivityLog).filter(ActivityLog.student_id == student_a_id).order_by(ActivityLog.id.desc()).first()
+    curr_github = client.get("/api/v1/monitoring/current-activity", headers=headers_a).json()
+
+    print(f"\n11. Chrome GitHub Evidence      : App='chrome.exe', URL='github.com', Category='Development'")
+    print(f"12. GitHub Backend Receipt      : HTTP {tx_github.status_code} | DB Row ID={log_github.id if log_github else 'None'}")
+    assert curr_github.get('current_application') == 'chrome.exe'
+
+    # --- TEST 3: CHROME + COURSERA ---
+    payload_coursera = dict(payload_youtube)
+    payload_coursera["window_title"] = "Web Activity (coursera.org)"
+    payload_coursera["website_url"] = "coursera.org"
+    payload_coursera["category"] = "Educational"
+    payload_coursera["confidence"] = 0.95
+
+    tx_coursera = client.post("/api/v1/monitoring/telemetry", json=payload_coursera)
+    log_coursera = db.query(ActivityLog).filter(ActivityLog.student_id == student_a_id).order_by(ActivityLog.id.desc()).first()
+    print(f"\n13. Chrome Coursera Evidence    : App='chrome.exe', URL='coursera.org', Category='Educational'")
+    print(f"14. Coursera Backend Receipt    : HTTP {tx_coursera.status_code} | DB Row ID={log_coursera.id if log_coursera else 'None'}")
+
+    # --- TEST 4: CHROME + INSTAGRAM ---
+    payload_insta = dict(payload_youtube)
+    payload_insta["window_title"] = "Web Activity (instagram.com)"
+    payload_insta["website_url"] = "instagram.com"
+    payload_insta["category"] = "Social"
+    payload_insta["confidence"] = 0.95
+
+    tx_insta = client.post("/api/v1/monitoring/telemetry", json=payload_insta)
+    log_insta = db.query(ActivityLog).filter(ActivityLog.student_id == student_a_id).order_by(ActivityLog.id.desc()).first()
+    print(f"\n15. Chrome Instagram Evidence   : App='chrome.exe', URL='instagram.com', Category='Social'")
+    print(f"16. Instagram Backend Receipt   : HTTP {tx_insta.status_code} | DB Row ID={log_insta.id if log_insta else 'None'}")
+
+    # --- TEST 5: VS CODE ---
+    payload_vscode = dict(payload_youtube)
     payload_vscode["application_name"] = "code.exe"
     payload_vscode["window_title"] = "Active IDE / Coding Work"
+    payload_vscode["website_url"] = ""
+    payload_vscode["category"] = "Development"
+    payload_vscode["confidence"] = 0.95
 
     tx_vscode = client.post("/api/v1/monitoring/telemetry", json=payload_vscode)
     log_vscode = db.query(ActivityLog).filter(ActivityLog.student_id == student_a_id).order_by(ActivityLog.id.desc()).first()
     curr_vscode = client.get("/api/v1/monitoring/current-activity", headers=headers_a).json()
 
-    print(f"\n12. VS Code Detection Evidence  : App='code.exe', Title='Active IDE / Coding Work'")
-    print(f"13. VS Code Backend Receipt     : HTTP {tx_vscode.status_code} | DB Row ID={log_vscode.id if log_vscode else 'None'}")
-    print(f"14. VS Code Dashboard UI State  : App='{curr_vscode.get('current_application')}' | Title='{curr_vscode.get('window_title')}'")
+    print(f"\n17. VS Code Detection Evidence  : App='code.exe', Title='Active IDE / Coding Work'")
+    print(f"18. VS Code Backend Receipt     : HTTP {tx_vscode.status_code} | DB Row ID={log_vscode.id if log_vscode else 'None'}")
     assert curr_vscode.get('current_application') == 'code.exe'
 
-    # --- TEST 3: NOTEPAD ---
-    payload_notepad = dict(payload_chrome)
+    # --- TEST 6: NOTEPAD ---
+    payload_notepad = dict(payload_youtube)
     payload_notepad["application_name"] = "notepad.exe"
-    payload_notepad["window_title"] = "Active notepad.exe Session"
+    payload_notepad["window_title"] = "Document Editing"
+    payload_notepad["website_url"] = ""
+    payload_notepad["category"] = "Productive"
+    payload_notepad["confidence"] = 0.95
 
     tx_notepad = client.post("/api/v1/monitoring/telemetry", json=payload_notepad)
     log_notepad = db.query(ActivityLog).filter(ActivityLog.student_id == student_a_id).order_by(ActivityLog.id.desc()).first()
     curr_notepad = client.get("/api/v1/monitoring/current-activity", headers=headers_a).json()
 
-    print(f"\n15. Notepad Detection Evidence  : App='notepad.exe', Title='Active notepad.exe Session'")
-    print(f"16. Notepad Backend Receipt     : HTTP {tx_notepad.status_code} | DB Row ID={log_notepad.id if log_notepad else 'None'}")
-    print(f"17. Notepad Dashboard UI State  : App='{curr_notepad.get('current_application')}' | Title='{curr_notepad.get('window_title')}'")
+    print(f"\n19. Notepad Detection Evidence  : App='notepad.exe', Title='Document Editing'")
+    print(f"20. Notepad Backend Receipt     : HTTP {tx_notepad.status_code} | DB Row ID={log_notepad.id if log_notepad else 'None'}")
     assert curr_notepad.get('current_application') == 'notepad.exe'
-
-    print(f"\n18. Dashboard Update Without Refresh: CONFIRMED (React polling loop updates state every 3s)")
 
     # --- PHASE 2: LOGOUT & TOKEN REVOCATION ---
     stop_res = requests.post(f"{bridge_url}/stop", json={"token": agent_token_a}, timeout=3.0)
     revoke_res = client.post("/api/v1/monitoring/agent/revoke-session", json={"token": agent_token_a})
-    replay_tx = client.post("/api/v1/monitoring/telemetry", json=payload_chrome)
+    replay_tx = client.post("/api/v1/monitoring/telemetry", json=payload_youtube)
     print(f"\n19. Logout / Revocation Evidence : Bridge /stop HTTP {stop_res.status_code} | Replay Old Token HTTP {replay_tx.status_code} Unauthorized")
     assert replay_tx.status_code in (401, 403)
 
