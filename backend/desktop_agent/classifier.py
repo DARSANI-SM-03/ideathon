@@ -1,12 +1,14 @@
 """
-Production-Quality AI Classification Engine for StudIQ Desktop Agent.
-Determinisitically classifies Windows Process Names, Window Titles, and Website Domains
-into standardized behavioral categories with explainable rule logging.
+Context-Aware AI Classification Engine for StudIQ Desktop Agent.
+Implements two-stage deterministic local rules + context-aware classification,
+caching by content identifier/URL hash, privacy data minimization,
+and score calculations (Productivity, Focus, Distraction).
 """
 
 import re
+import time
 import logging
-from typing import Tuple, List, Dict, Optional
+from typing import Tuple, List, Dict, Optional, Any
 
 # Configure logger for detailed classification logging
 logger = logging.getLogger("ActivityClassifier")
@@ -20,156 +22,135 @@ if not logger.handlers:
 
 class ActivityClassifier:
     """
-    Production-Quality Deterministic AI Classification Engine for StudIQ Desktop Agent.
-    Priority Hierarchy:
-    1. Parent Whitelist Rule
-    2. Exact Application Rule
-    3. Exact Domain Rule
-    4. Domain Content / Category Rule (e.g. YouTube Educational vs Entertainment)
-    5. Application Family Rule
-    6. Keyword Rules (URL & Window Title)
-    7. Recognized Browser Fallback ("Browsing" @ 0.70 confidence)
-    8. Unrecognized Activity Fallback ("Unknown" @ 0.50 confidence)
+    Two-Stage Context-Aware Classification Engine for StudIQ.
+
+    Stage 1 — Local Fast Classifier: Deterministic rules for unambiguous applications & domains.
+    Stage 2 — Context-Aware Classifier: Evaluates safe non-sensitive metadata (title, URL/video ID).
     """
 
-    BROWSERS = [
-        "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe",
-        "chrome", "msedge", "firefox", "brave", "opera"
+    # Ambiguous platforms requiring context-aware Stage 2 evaluation
+    AMBIGUOUS_PLATFORMS = {
+        "youtube.com",
+        "google.com",
+        "chatgpt.com",
+        "reddit.com",
+        "discord.com",
+        "medium.com",
+        "x.com",
+        "twitter.com",
+        "facebook.com"
+    }
+
+    # Taxonomy Category Mappings
+    PRIMARY_TAXONOMY = [
+        "Education",
+        "Coding/Technical",
+        "Productivity",
+        "Research",
+        "Communication",
+        "News",
+        "Entertainment",
+        "Social Media",
+        "Gaming",
+        "Shopping",
+        "Other",
+        "Unknown"
     ]
 
-    # Application Rule Definitions
-    APPLICATION_MAP: Dict[str, Tuple[str, float]] = {
-        # Development
-        "code.exe": ("Development", 0.95),
-        "visual studio code": ("Development", 0.95),
-        "devenv.exe": ("Development", 0.95),
-        "visual studio": ("Development", 0.95),
-        "pycharm.exe": ("Development", 0.95),
-        "pycharm64.exe": ("Development", 0.95),
-        "idea64.exe": ("Development", 0.95),
-        "intellij": ("Development", 0.95),
-        "eclipse.exe": ("Development", 0.95),
-        "studio64.exe": ("Development", 0.95),
-        "android studio": ("Development", 0.95),
-        "antigravity ide.exe": ("Development", 0.95),
-        "python.exe": ("Development", 0.95),
-        "pythonw.exe": ("Development", 0.95),
-        "jupyter.exe": ("Development", 0.95),
-        "notepad++.exe": ("Development", 0.95),
-        "postman.exe": ("Development", 0.95),
-        "gitkraken.exe": ("Development", 0.95),
-        "github.exe": ("Development", 0.95),
-        "github desktop": ("Development", 0.95),
+    # Deterministic Application Map (Stage 1)
+    APPLICATION_MAP: Dict[str, Tuple[str, str, float]] = {
+        # Coding/Technical
+        "code.exe": ("Coding/Technical", "IDE", 0.95),
+        "visual studio code": ("Coding/Technical", "IDE", 0.95),
+        "devenv.exe": ("Coding/Technical", "IDE", 0.95),
+        "visual studio": ("Coding/Technical", "IDE", 0.95),
+        "pycharm.exe": ("Coding/Technical", "IDE", 0.95),
+        "pycharm64.exe": ("Coding/Technical", "IDE", 0.95),
+        "idea64.exe": ("Coding/Technical", "IDE", 0.95),
+        "intellij": ("Coding/Technical", "IDE", 0.95),
+        "eclipse.exe": ("Coding/Technical", "IDE", 0.95),
+        "studio64.exe": ("Coding/Technical", "IDE", 0.95),
+        "android studio": ("Coding/Technical", "IDE", 0.95),
+        "antigravity ide.exe": ("Coding/Technical", "IDE", 0.95),
+        "python.exe": ("Coding/Technical", "Interpreter", 0.95),
+        "pythonw.exe": ("Coding/Technical", "Interpreter", 0.95),
+        "jupyter.exe": ("Coding/Technical", "Notebook", 0.95),
+        "notepad++.exe": ("Coding/Technical", "Text Editor", 0.95),
+        "postman.exe": ("Coding/Technical", "API Testing", 0.95),
+        "gitkraken.exe": ("Coding/Technical", "Version Control", 0.95),
+        "github.exe": ("Coding/Technical", "Version Control", 0.95),
 
-        # Productive
-        "winword.exe": ("Productive", 0.95),
-        "word.exe": ("Productive", 0.95),
-        "excel.exe": ("Productive", 0.95),
-        "powerpnt.exe": ("Productive", 0.95),
-        "onenote.exe": ("Productive", 0.95),
-        "notion.exe": ("Productive", 0.95),
-        "obsidian.exe": ("Productive", 0.95),
-        "notepad.exe": ("Productive", 0.95),
+        # Productivity
+        "winword.exe": ("Productivity", "Document Editing", 0.95),
+        "word.exe": ("Productivity", "Document Editing", 0.95),
+        "excel.exe": ("Productivity", "Spreadsheet", 0.95),
+        "powerpnt.exe": ("Productivity", "Presentation", 0.95),
+        "onenote.exe": ("Productivity", "Notes", 0.95),
+        "notion.exe": ("Productivity", "Workspace", 0.95),
+        "obsidian.exe": ("Productivity", "Notes", 0.95),
+        "notepad.exe": ("Productivity", "Notes", 0.95),
 
         # Communication
-        "outlook.exe": ("Communication", 0.95),
-        "whatsapp.exe": ("Communication", 0.95),
-        "discord.exe": ("Communication", 0.95),
-        "slack.exe": ("Communication", 0.95),
+        "outlook.exe": ("Communication", "Email", 0.95),
+        "whatsapp.exe": ("Communication", "Messaging", 0.95),
+        "slack.exe": ("Communication", "Messaging", 0.95),
+        "teams.exe": ("Communication", "Meeting", 0.95),
+        "zoom.exe": ("Communication", "Meeting", 0.95),
 
-        # Meeting
-        "teams.exe": ("Meeting", 0.95),
-        "zoom.exe": ("Meeting", 0.95),
-
-        # System
-        "explorer.exe": ("System", 0.95),
-        "cmd.exe": ("System", 0.95),
-        "powershell.exe": ("System", 0.95),
-        "windowsterminal.exe": ("System", 0.95),
-        "taskmgr.exe": ("System", 0.95),
-        "systemsettings.exe": ("System", 0.95),
-        "control.exe": ("System", 0.95),
-        "calc.exe": ("System", 0.95),
-        "mspaint.exe": ("System", 0.95),
-
-        # Design & Creative
-        "figma.exe": ("Design", 0.95),
-        "canva.exe": ("Design", 0.95),
-        "photoshop.exe": ("Creative", 0.95),
-        "illustrator.exe": ("Creative", 0.95),
+        # System / Other
+        "explorer.exe": ("Other", "File Manager", 0.95),
+        "cmd.exe": ("Other", "Terminal", 0.95),
+        "powershell.exe": ("Other", "Terminal", 0.95),
+        "windowsterminal.exe": ("Other", "Terminal", 0.95),
+        "taskmgr.exe": ("Other", "System Utility", 0.95),
+        "systemsettings.exe": ("Other", "System Settings", 0.95),
 
         # Entertainment & Gaming
-        "spotify.exe": ("Entertainment", 0.95),
-        "vlc.exe": ("Entertainment", 0.95),
-        "netflix.exe": ("Entertainment", 0.95),
-        "steam.exe": ("Gaming", 0.95),
-        "epicgameslauncher.exe": ("Gaming", 0.95),
-        "valorant.exe": ("Gaming", 0.95),
+        "spotify.exe": ("Entertainment", "Music Player", 0.95),
+        "vlc.exe": ("Entertainment", "Media Player", 0.95),
+        "netflix.exe": ("Entertainment", "Video Streaming", 0.95),
+        "steam.exe": ("Gaming", "Game Platform", 0.95),
+        "epicgameslauncher.exe": ("Gaming", "Game Platform", 0.95),
+        "valorant.exe": ("Gaming", "Esports", 0.95),
     }
 
-    # Domain Rule Definitions
-    DOMAIN_MAP: Dict[str, Tuple[str, float]] = {
-        # Development
-        "github.com": ("Development", 0.95),
-        "gitlab.com": ("Development", 0.95),
-        "stackoverflow.com": ("Development", 0.95),
-        "developer.mozilla.org": ("Development", 0.95),
-        "docs.python.org": ("Development", 0.95),
-        "pypi.org": ("Development", 0.95),
+    # Deterministic Domain Map (Stage 1 - Non-Ambiguous)
+    DOMAIN_MAP: Dict[str, Tuple[str, str, float]] = {
+        "github.com": ("Coding/Technical", "Repository", 0.95),
+        "gitlab.com": ("Coding/Technical", "Repository", 0.95),
+        "stackoverflow.com": ("Coding/Technical", "Q&A", 0.95),
+        "developer.mozilla.org": ("Coding/Technical", "Documentation", 0.95),
+        "docs.python.org": ("Coding/Technical", "Documentation", 0.95),
+        "pypi.org": ("Coding/Technical", "Package Index", 0.95),
+        "leetcode.com": ("Education", "Competitive Coding", 0.95),
+        "hackerrank.com": ("Education", "Competitive Coding", 0.95),
+        "geeksforgeeks.org": ("Coding/Technical", "CS Tutorials", 0.95),
 
-        # Educational
-        "coursera.org": ("Educational", 0.95),
-        "udemy.com": ("Educational", 0.95),
-        "edx.org": ("Educational", 0.95),
-        "khanacademy.org": ("Educational", 0.95),
-        "w3schools.com": ("Educational", 0.95),
-        "geeksforgeeks.org": ("Educational", 0.95),
-        "leetcode.com": ("Educational", 0.95),
-        "hackerrank.com": ("Educational", 0.95),
-        "nptel.ac.in": ("Educational", 0.95),
+        "coursera.org": ("Education", "Online Course", 0.95),
+        "udemy.com": ("Education", "Online Course", 0.95),
+        "edx.org": ("Education", "Online Course", 0.95),
+        "khanacademy.org": ("Education", "Online Learning", 0.95),
+        "w3schools.com": ("Education", "Web Tutorials", 0.95),
+        "nptel.ac.in": ("Education", "Academic Lectures", 0.95),
 
-        # Research
-        "wikipedia.org": ("Research", 0.95),
-        "arxiv.org": ("Research", 0.95),
-        "scholar.google.com": ("Research", 0.95),
-        "researchgate.net": ("Research", 0.95),
+        "wikipedia.org": ("Research", "Encyclopedia", 0.95),
+        "arxiv.org": ("Research", "Academic Preprints", 0.95),
+        "scholar.google.com": ("Research", "Academic Search", 0.95),
+        "researchgate.net": ("Research", "Academic Papers", 0.95),
 
-        # Browsing
-        "google.com": ("Browsing", 0.90),
-        "bing.com": ("Browsing", 0.90),
-        "duckduckgo.com": ("Browsing", 0.90),
-        "search.yahoo.com": ("Browsing", 0.90),
-        "amazon.com": ("Browsing", 0.90),
-        "amazon.in": ("Browsing", 0.90),
-        "flipkart.com": ("Browsing", 0.90),
+        "spotify.com": ("Entertainment", "Music Streaming", 0.95),
+        "netflix.com": ("Entertainment", "Video Streaming", 0.95),
+        "twitch.tv": ("Entertainment", "Live Streaming", 0.95),
+        "primevideo.com": ("Entertainment", "Video Streaming", 0.95),
 
-        # Social
-        "facebook.com": ("Social", 0.95),
-        "instagram.com": ("Social", 0.95),
-        "reddit.com": ("Social", 0.95),
-        "twitter.com": ("Social", 0.95),
-        "x.com": ("Social", 0.95),
-        "linkedin.com": ("Social", 0.95),
-
-        # Entertainment
-        "netflix.com": ("Entertainment", 0.95),
-        "spotify.com": ("Entertainment", 0.95),
-        "twitch.tv": ("Entertainment", 0.95),
-        "primevideo.com": ("Entertainment", 0.95),
-        "disneyplus.com": ("Entertainment", 0.95),
-        "hotstar.com": ("Entertainment", 0.95),
+        "amazon.com": ("Shopping", "E-Commerce", 0.90),
+        "amazon.in": ("Shopping", "E-Commerce", 0.90),
+        "flipkart.com": ("Shopping", "E-Commerce", 0.90),
     }
 
-    # Keyword Rules for Title / URL
-    YOUTUBE_EDU_KEYWORDS = [
-        "leetcode", "dsa", "data structures", "algorithms", "python tutorial",
-        "java tutorial", "c++ tutorial", "coding", "programming", "lecture",
-        "mit opencourseware", "nptel", "coursera", "udemy", "machine learning",
-        "deep learning", "artificial intelligence", "ai explained", "system design",
-        "sql tutorial", "react tutorial", "web development", "computer science"
-    ]
-
-    AI_TOOLS = ["chatgpt", "chatgpt.com", "claude.ai", "claude", "gemini.google.com", "perplexity.ai", "copilot"]
+    def __init__(self, cache_ttl: int = 3600):
+        self._cache: Dict[str, Dict[str, Any]] = {}
+        self.cache_ttl = cache_ttl
 
     def extract_domain(self, url: str, title: str = "") -> str:
         """Strips protocols, www, subpaths, query strings to extract clean domain."""
@@ -192,30 +173,298 @@ class ActivityClassifier:
                 return "wikipedia.org"
             elif "google" in t_lower:
                 return "google.com"
+            elif "chatgpt" in t_lower:
+                return "chatgpt.com"
+            elif "reddit" in t_lower:
+                return "reddit.com"
 
         if not target:
             return ""
 
-        # Remove http/https
         target = re.sub(r'^https?://', '', target)
-        # Remove path and query string
-        target = target.split('/')[0].split('?')[0].split('#')[0]
-        # Remove port number
-        target = target.split(':')[0]
-        # Remove leading www.
+        target = target.split('/')[0].split('?')[0].split('#')[0].split(':')[0]
         if target.startswith("www."):
             target = target[4:]
 
         return target.strip()
 
-    def _log_result(self, rule: str, item: str, category: str, confidence: float):
+    def extract_youtube_video_id(self, url: str, title: str = "") -> Optional[str]:
+        """Extracts YouTube video ID from URL or title if available."""
+        if not url and not title:
+            return None
+        m = re.search(r'(?:v=|\/embed\/|\/watch\?v=|\/v\/|youtu\.be\/)([a-zA-Z0-9_-]{11})', url)
+        if m:
+            return m.group(1)
+        return None
+
+    def _calculate_scores(self, category: str, subcategory: str) -> Tuple[float, float, float]:
+        """Calculates independent Productivity, Focus, and Distraction scores (0.0 to 1.0)."""
+        cat = category.lower()
+        sub = subcategory.lower()
+
+        if "coding" in cat or "technical" in cat:
+            return (0.98, 0.95, 0.02)
+        elif "education" in cat:
+            return (0.95, 0.92, 0.05)
+        elif "research" in cat:
+            return (0.92, 0.88, 0.08)
+        elif "productivity" in cat:
+            if "focus music" in sub:
+                return (0.85, 0.90, 0.10)
+            return (0.90, 0.91, 0.08)
+        elif "communication" in cat:
+            return (0.60, 0.50, 0.40)
+        elif "news" in cat:
+            return (0.45, 0.40, 0.55)
+        elif "shopping" in cat:
+            return (0.20, 0.30, 0.80)
+        elif "social" in cat:
+            return (0.15, 0.20, 0.85)
+        elif "entertainment" in cat:
+            return (0.10, 0.20, 0.90)
+        elif "gaming" in cat:
+            return (0.05, 0.25, 0.95)
+        else:
+            return (0.50, 0.50, 0.50)
+
+    def classify_with_context(
+        self,
+        app_name: str,
+        window_title: str = "",
+        website_url: str = "",
+        whitelisted_apps: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Main two-stage classification method returning complete structured metadata,
+        confidence level, and scores.
+        """
+        app = (app_name or "").strip().lower()
+        title = (window_title or "").strip()
+        url = (website_url or "").strip().lower()
+        domain = self.extract_domain(url, title)
+        video_id = self.extract_youtube_video_id(url, title)
+
+        # Build Cache Key
+        cache_key = f"{video_id}" if video_id else f"{domain}:{title.lower()}"
+        now = time.time()
+
+        if cache_key in self._cache:
+            entry = self._cache[cache_key]
+            if now - entry["cached_at"] < self.cache_ttl:
+                res = dict(entry["data"])
+                res["classification_method"] = "Cached Classification"
+                self._log_classification(res)
+                return res
+
+        context_required = domain in self.AMBIGUOUS_PLATFORMS
+        is_browser = any(b in app for b in ["chrome", "msedge", "firefox", "brave", "opera"])
+
+        category = "Unknown"
+        subcategory = "General"
+        confidence = 0.50
+        classification_method = "Stage 1 Deterministic Rule"
+
+        # ----------------------------------------------------
+        # STAGE 1: Deterministic Fast Classifier
+        # ----------------------------------------------------
+        if whitelisted_apps:
+            combined = f"{app} {title.lower()} {url}"
+            for w_app in whitelisted_apps:
+                if w_app.lower() in combined:
+                    category = "Education"
+                    subcategory = "Parent Whitelist"
+                    confidence = 0.99
+                    context_required = False
+
+        if not context_required and category == "Unknown":
+            if not is_browser and app:
+                for a_key, (cat, sub, conf) in self.APPLICATION_MAP.items():
+                    if a_key in app:
+                        category = cat
+                        subcategory = sub
+                        confidence = conf
+                        break
+
+            if category == "Unknown" and domain in self.DOMAIN_MAP:
+                cat, sub, conf = self.DOMAIN_MAP[domain]
+                category = cat
+                subcategory = sub
+                confidence = conf
+
+        # ----------------------------------------------------
+        # STAGE 2: Context-Aware Classifier (Ambiguous / Unknown)
+        # ----------------------------------------------------
+        if context_required or category == "Unknown":
+            classification_method = "Stage 2 Context Classifier"
+            t_lower = title.lower()
+
+            # Helper for word boundary keyword matching
+            def has_kw(kws_list: List[str]) -> bool:
+                for kw in kws_list:
+                    if len(kw) <= 3 and kw.isalnum():
+                        if re.search(r'\b' + re.escape(kw) + r'\b', t_lower):
+                            return True
+                    elif kw in t_lower:
+                        return True
+                return False
+
+            # Word lists
+            focus_music_kws = ["study music", "deep focus", "lofi", "lofi hip hop", "focus music", "binaural beats", "ambient study", "pomodoro music", "relaxing study", "classical study"]
+            coding_kws = ["python", "java", "c++", "dsa", "leetcode", "data structures", "algorithms", "coding", "programming", "github", "compiler", "full course", "web development", "react", "sql", "system design", "computer science"]
+            edu_kws = ["tutorial", "lecture", "machine learning", "deep learning", "ai", "opencourseware", "nptel", "coursera", "udemy", "lesson", "exam", "study", "learn", "how to solve"]
+            ent_kws = ["funny", "meme", "memes", "song", "music video", "official video", "trailer", "gameplay", "movie", "vlog", "prank", "comedy", "compilation", "kannukulla", "nallaru po"]
+            research_kws = ["wiki", "wikipedia", "arxiv", "paper", "journal", "documentation", "research", "scholar"]
+            social_kws = ["feed", "reels", "shorts", "post", "tweet", "timeline", "instagram", "facebook", "reddit"]
+
+            if domain == "youtube.com":
+                if has_kw(focus_music_kws):
+                    category = "Productivity"
+                    subcategory = "Focus Music"
+                    confidence = 0.93
+                elif has_kw(coding_kws):
+                    category = "Education"
+                    subcategory = "Programming"
+                    confidence = 0.97
+                elif has_kw(edu_kws):
+                    category = "Education"
+                    subcategory = "Academic"
+                    confidence = 0.95
+                elif has_kw(ent_kws):
+                    category = "Entertainment"
+                    subcategory = "Comedy / Music"
+                    confidence = 0.94
+                else:
+                    category = "Entertainment"
+                    subcategory = "General Video"
+                    confidence = 0.90
+
+            elif domain == "chatgpt.com":
+                if has_kw(coding_kws):
+                    category = "Coding/Technical"
+                    subcategory = "AI Assistant"
+                    confidence = 0.92
+                elif has_kw(edu_kws):
+                    category = "Education"
+                    subcategory = "AI Assistant"
+                    confidence = 0.90
+                else:
+                    category = "Other"
+                    subcategory = "AI Assistant"
+                    confidence = 0.85
+
+            elif domain in ["reddit.com", "x.com", "twitter.com", "facebook.com", "instagram.com", "linkedin.com"]:
+                if has_kw(coding_kws):
+                    category = "Coding/Technical"
+                    subcategory = "Tech Community"
+                    confidence = 0.90
+                else:
+                    category = "Social Media"
+                    subcategory = "Feed"
+                    confidence = 0.92
+
+            elif domain == "google.com":
+                if has_kw(coding_kws) or has_kw(edu_kws):
+                    category = "Research"
+                    subcategory = "Academic Search"
+                    confidence = 0.90
+                else:
+                    category = "Other"
+                    subcategory = "Web Search"
+                    confidence = 0.75
+
+            else:
+                # General title keyword fallback
+                if has_kw(focus_music_kws):
+                    category = "Productivity"
+                    subcategory = "Focus Music"
+                    confidence = 0.93
+                elif has_kw(coding_kws):
+                    category = "Coding/Technical"
+                    subcategory = "Development"
+                    confidence = 0.90
+                elif has_kw(edu_kws):
+                    category = "Education"
+                    subcategory = "Learning"
+                    confidence = 0.90
+                elif has_kw(ent_kws):
+                    category = "Entertainment"
+                    subcategory = "Media"
+                    confidence = 0.90
+                elif is_browser:
+                    category = "Unknown"
+                    subcategory = "General Browsing"
+                    confidence = 0.50
+
+        # Confidence Handling
+        if confidence >= 0.85:
+            confidence_level = "HIGH"
+        elif confidence >= 0.60:
+            confidence_level = "MEDIUM"
+        else:
+            confidence_level = "LOW"
+            category = "Unknown"
+            subcategory = "Uncertain"
+
+        prod_score, focus_score, dist_score = self._calculate_scores(category, subcategory)
+
+        res = {
+            "domain": domain or "N/A",
+            "context_required": context_required,
+            "page_title": title or "N/A",
+            "classification_method": classification_method,
+            "category": category,
+            "subcategory": subcategory,
+            "confidence": confidence,
+            "confidence_level": confidence_level,
+            "productivity_score": prod_score,
+            "focus_score": focus_score,
+            "distraction_score": dist_score,
+            "matched_rule": classification_method,
+            "matched_signal": domain if domain else app
+        }
+
+        # Save to Cache
+        if cache_key:
+            self._cache[cache_key] = {
+                "cached_at": now,
+                "data": res
+            }
+
+        self._log_classification(res)
+        return res
+
+    def _log_classification(self, res: Dict[str, Any]):
+        """Prints structured explainable classifier logs."""
         log_lines = [
-            f"Matched Rule: {rule}",
-            f"Matched Item: {item if item else 'NONE'}",
-            f"Final Category: {category}",
-            f"Confidence: {confidence:.2f}"
+            f"Domain: {res['domain']}",
+            f"Context Required: {'YES' if res['context_required'] else 'NO'}",
+            f"Page Title: {res['page_title']}",
+            f"Classification Method: {res['classification_method']}",
+            f"Category: {res['category']}",
+            f"Subcategory: {res['subcategory']}",
+            f"Confidence: {res['confidence']:.2f}",
+            f"Productivity Score: {res['productivity_score']:.2f}",
+            f"Focus Score: {res['focus_score']:.2f}",
+            f"Distraction Score: {res['distraction_score']:.2f}"
         ]
         logger.info("\n".join(log_lines))
+
+    def _map_to_legacy_category(self, primary_cat: str) -> str:
+        """Maps taxonomy category to legacy string for backward compatibility if needed."""
+        mapping = {
+            "Education": "Educational",
+            "Coding/Technical": "Development",
+            "Productivity": "Productive",
+            "Research": "Research",
+            "Communication": "Communication",
+            "Entertainment": "Entertainment",
+            "Social Media": "Social",
+            "Gaming": "Entertainment",
+            "Shopping": "Browsing",
+            "Other": "System",
+            "Unknown": "Unknown"
+        }
+        return mapping.get(primary_cat, primary_cat)
 
     def classify_activity(
         self,
@@ -224,79 +473,11 @@ class ActivityClassifier:
         website_url: str = "",
         whitelisted_apps: Optional[List[str]] = None
     ) -> Tuple[str, float]:
-        app = (app_name or "").strip().lower()
-        title = (window_title or "").strip()
-        url = (website_url or "").strip().lower()
-        combined = f"{app} {title.lower()} {url}".strip()
-
-        domain = self.extract_domain(url, title)
-
-        # 1. Parent Whitelist Rule
-        if whitelisted_apps:
-            for w_app in whitelisted_apps:
-                if w_app.lower() in combined:
-                    self._log_result("Parent Whitelist Rule", w_app, "Educational", 0.99)
-                    return ("Educational", 0.99)
-
-        # 2. AI Assistant Tools Rule
-        if any(ai in app or ai in domain or ai in title.lower() for ai in self.AI_TOOLS):
-            if any(kw in combined for kw in ["coding", "python", "dsa", "leetcode", "project", "assignment", "research", "study"]):
-                self._log_result("AI Assistant Rule (Edu Context)", "ai_assistant", "Educational", 0.95)
-                return ("Educational", 0.95)
-            self._log_result("AI Assistant Rule", "ai_assistant", "Development", 0.90)
-            return ("Development", 0.90)
-
-        # 3. YouTube Specific Evaluation
-        if domain == "youtube.com" or "youtube" in title.lower():
-            title_lower = title.lower()
-            matched_edu_kw = next((kw for kw in self.YOUTUBE_EDU_KEYWORDS if kw in title_lower or kw in url), None)
-            if matched_edu_kw:
-                self._log_result("YouTube Educational Content Rule", matched_edu_kw, "Educational", 0.95)
-                return ("Educational", 0.95)
-            else:
-                self._log_result("Exact Domain Rule", "youtube.com", "Entertainment", 0.90)
-                return ("Entertainment", 0.90)
-
-        # 4. Exact Domain Matching
-        if domain in self.DOMAIN_MAP:
-            cat, conf = self.DOMAIN_MAP[domain]
-            self._log_result("Exact Domain Rule", domain, cat, conf)
-            return (cat, conf)
-
-        # Partial domain match for known domains
-        for d_key, (cat, conf) in self.DOMAIN_MAP.items():
-            if d_key in domain:
-                self._log_result("Domain Match Rule", d_key, cat, conf)
-                return (cat, conf)
-
-        # 5. Terminal Custom Title Override
-        if any(t in app for t in ["cmd.exe", "powershell.exe", "windowsterminal.exe"]):
-            title_lower = title.lower()
-            if any(kw in title_lower for kw in ["python", "node", "git", "build", "npm", "docker", "studiq", "ideathon"]):
-                self._log_result("Terminal Active Development Rule", app, "Development", 0.95)
-                return ("Development", 0.95)
-
-        # 6. Exact Non-Browser Application Matching
-        is_browser = any(b == app or (b in app and app.endswith(".exe")) for b in self.BROWSERS)
-        if not is_browser and app:
-            if app in self.APPLICATION_MAP:
-                cat, conf = self.APPLICATION_MAP[app]
-                self._log_result("Exact Application Rule", app, cat, conf)
-                return (cat, conf)
-
-            for a_key, (cat, conf) in self.APPLICATION_MAP.items():
-                if a_key in app:
-                    self._log_result("Application Match Rule", a_key, cat, conf)
-                    return (cat, conf)
-
-        # 7. Browser Unknown-Domain Fallback
-        if is_browser:
-            self._log_result("Browser Fallback Rule", app or "browser", "Browsing", 0.70)
-            return ("Browsing", 0.70)
-
-        # 8. True Unknown Fallback
-        self._log_result("Unrecognized Activity Fallback", "NONE", "Unknown", 0.50)
-        return ("Unknown", 0.50)
+        """Backward-compatible tuple return (category, confidence)."""
+        res = self.classify_with_context(app_name, window_title, website_url, whitelisted_apps)
+        # Check if caller expects legacy category or primary category
+        cat = self._map_to_legacy_category(res["category"])
+        return (cat, res["confidence"])
 
     def classify_with_confidence(
         self,

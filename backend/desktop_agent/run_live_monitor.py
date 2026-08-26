@@ -137,13 +137,10 @@ def run_persistent_streaming_monitor():
                 time.sleep(5)
                 continue
 
-            # 2. Real AI Classification
-            log_capture.last_rule = "Exact Application Rule"
-            log_capture.last_item = "NONE"
-            category, confidence = classifier.classify_activity(app_name, win_title, website_url)
-
-            rule_used = log_capture.last_rule
-            item_used = log_capture.last_item
+            # 2. Real AI Context Classification
+            res_meta = classifier.classify_with_context(app_name, win_title, website_url)
+            category = res_meta["category"]
+            confidence = res_meta["confidence"]
 
             # 3. Build Telemetry Payload
             cur_token = os.getenv("STUDIQ_AGENT_TOKEN", agent_token)
@@ -182,10 +179,16 @@ def run_persistent_streaming_monitor():
             print(f"  2. Classifier Input  : App='{app_name}' | Title='{win_title}' | URL='{website_url}'")
             print("")
             print("[CLASSIFIER LOG]")
-            print(f"Matched Rule: {rule_used}")
-            print(f"Matched Item: {item_used}")
-            print(f"Final Category: {category}")
-            print(f"Confidence: {confidence:.2f}")
+            print(f"Domain: {res_meta['domain']}")
+            print(f"Context Required: {'YES' if res_meta['context_required'] else 'NO'}")
+            print(f"Page Title: {res_meta['page_title']}")
+            print(f"Classification Method: {res_meta['classification_method']}")
+            print(f"Category: {res_meta['category']}")
+            print(f"Subcategory: {res_meta['subcategory']}")
+            print(f"Confidence: {res_meta['confidence']:.2f}")
+            print(f"Productivity Score: {res_meta['productivity_score']:.2f}")
+            print(f"Focus Score: {res_meta['focus_score']:.2f}")
+            print(f"Distraction Score: {res_meta['distraction_score']:.2f}")
             print("")
             print(f"  3. Classifier Result: Category='{category}' | Confidence={confidence:.2f}")
             print(f"  4. JSON Dispatched   : App='{app_name}' | Category='{category}'")
