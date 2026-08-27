@@ -104,30 +104,27 @@ def ensure_bridge_running():
     log_debug("[Protocol Handler] Local bridge on 127.0.0.1:8765 is not running. Launching background bridge daemon...")
     
     try:
-        if getattr(sys, 'frozen', False) and sys.platform == "win32":
-            os.spawnv(os.P_NOWAIT, sys.executable, [sys.executable, "--daemon"])
+        if getattr(sys, 'frozen', False):
+            cmd = [sys.executable, "--daemon"]
         else:
-            if getattr(sys, 'frozen', False):
-                cmd = [sys.executable, "--daemon"]
-            else:
-                bridge_py = os.path.join(get_script_dir(), "bridge.py")
-                cmd = [sys.executable, bridge_py]
+            bridge_py = os.path.join(get_script_dir(), "bridge.py")
+            cmd = [sys.executable, bridge_py]
 
-            CREATE_NO_WINDOW = 0x08000000
-            CREATE_NEW_PROCESS_GROUP = 0x00000200
-            DETACHED_PROCESS = 0x00000008
-            CREATE_BREAKAWAY_FROM_JOB = 0x01000000
-            flags = (CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB) if sys.platform == "win32" else 0
+        CREATE_NO_WINDOW = 0x08000000
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        DETACHED_PROCESS = 0x00000008
+        CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+        flags = (CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB) if sys.platform == "win32" else 0
 
-            subprocess.Popen(
-                cmd,
-                cwd=get_script_dir(),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=flags,
-                close_fds=True
-            )
+        proc = subprocess.Popen(
+            cmd,
+            cwd=get_script_dir(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=flags,
+            close_fds=True
+        )
         log_debug(f"Daemon process launched with PID {proc.pid}")
         for i in range(40):
             time.sleep(0.2)

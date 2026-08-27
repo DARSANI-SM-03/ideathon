@@ -22,6 +22,13 @@ def build():
     print(f"Entrypoint : {entry_point}")
     print(f"Target Dir : {agent_dir}")
     
+    # 1. Terminate any running agent instances to prevent DLL file lock errors during PyInstaller rebuild
+    try:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/F", "/IM", "StudIQAgent.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+    
     cmd = [
         sys.executable,
         "-m",
